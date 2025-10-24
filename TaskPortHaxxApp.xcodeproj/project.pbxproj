@@ -18,6 +18,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				TaskPortHaxxApp.ent,
 			);
 			target = E15251872EAB4A6800F6E003 /* TaskPortHaxxApp */;
 		};

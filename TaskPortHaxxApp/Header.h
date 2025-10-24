@@ -23,3 +23,5 @@ int posix_spawnattr_set_launch_type_np(posix_spawnattr_t *attr, uint8_t launch_t
 int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
          exception_mask_t mask, mach_port_t new_port,
          exception_behavior_t behavior, thread_state_flavor_t flavor);
+
+mach_port_t setup_exception_server(void);
