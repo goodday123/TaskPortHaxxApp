@@ -8,6 +8,8 @@
 @import Darwin;
 #include <crt_externs.h>
 
+mach_port_t GlobalChildTaskPort;
+mach_port_t GlobalChildThreadPort;
 extern char **environ;
 
 kern_return_t
@@ -26,3 +28,5 @@ int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
          exception_behavior_t behavior, thread_state_flavor_t flavor);
 
 mach_port_t setup_exception_server(void);
+pid_t child_spawn(void);
+mach_port_t psychicpaper_proxy(mach_port_t task);

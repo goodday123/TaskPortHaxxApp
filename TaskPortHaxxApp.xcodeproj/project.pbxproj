@@ -46,11 +46,6 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		E123952D2EAC3EB700E9BD9F /* opainject */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = opainject;
-			sourceTree = "<group>";
-		};
 		E152518A2EAB4A6800F6E003 /* TaskPortHaxxApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -89,7 +84,6 @@
 				E118B6562EAB4BB1008050F8 /* jbdev.plist */,
 				E118B6572EAB4BB1008050F8 /* jbdev.build.sh */,
 				E152518A2EAB4A6800F6E003 /* TaskPortHaxxApp */,
-				E123952D2EAC3EB700E9BD9F /* opainject */,
 				E15251892EAB4A6800F6E003 /* Products */,
 				E152520A2EAB4B3300F6E003 /* Config.xcconfig */,
 			);
@@ -118,9 +112,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				E123952D2EAC3EB700E9BD9F /* opainject */,
 			);
 			name = opainject;
 			packageProductDependencies = (

@@ -320,6 +320,8 @@
     <true/>
     <key>com.apple.system-task-ports.control</key>
     <true/>
+    <key>com.apple.system-task-ports.inspect</key>
+    <true/>
     <key>com.apple.private.thread-set-state</key>
     <true/>
 
