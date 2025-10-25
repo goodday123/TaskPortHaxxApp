@@ -38,7 +38,7 @@ void spawn_opainject_for_task(pid_t pid) {
     } while (!WIFEXITED(status) && !WIFSIGNALED(status));
 }
 
-BOOL done = NO;
+BOOL alreadyHandled = NO;
 kern_return_t catch_mach_exception_raise_state (mach_port_t exception_port,
                                                 exception_type_t exception,
                                                 const mach_exception_data_t code,
@@ -69,68 +69,57 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     printf("got task port: %d\n", task);
     
     NSLog(@"exception handler raise state - exception %d", exception);
-    if (*flavor == ARM_THREAD_STATE64) {
-        const arm_thread_state64_t *old_state = (const arm_thread_state64_t*)old_state_;
-        if (done) {
-            return KERN_FAILURE;
-        }
-        done = YES;
-        
-        task_set_bootstrap_port(task, bootstrap_port);
-        
-        arm_thread_state64_t *new_state = (arm_thread_state64_t*)new_state_;
-        //NSLog(@"fault address: %p", __darwin_arm_thread_state64_get_pc_fptr(*new_state));
-        memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
-        //__darwin_arm_thread_state64_set_lr_fptr(*new_state, (void *)0x4242424200);
-        for (int i = 0; i < 29; i++) {
-            new_state->__x[i] = 0x4141414100 + i;
-        }
-        
-        void *pc = __darwin_arm_thread_state64_get_pc_fptr(*new_state);
-        pc = ptrauth_strip(pc, ptrauth_key_function_pointer);
-        
-        __darwin_arm_thread_state64_set_pc_fptr(*new_state, (void *)ptrauth_sign_unauthenticated(ptrauth_strip((void*)((uintptr_t)pc + 4000000), ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
-        NSLog(@"resume address: %p", __darwin_arm_thread_state64_get_pc_fptr(*new_state));
-        *new_state_cnt = old_state_cnt;
-        
-        // i'm too lazy to pass mach port so let's give it to launchd
-        pid_t pid = 0;
-        kern_return_t kr = pid_for_task(task, &pid);
-        NSCAssert(kr == KERN_SUCCESS, @"pid_for_task failed: %d", kr);
-        char service_name[64];
-        snprintf(service_name, sizeof(service_name), "com.kdt.taskporthaxx.task_for_pid_%d", pid);
-        kr = bootstrap_register(bootstrap_port, service_name, task);
-        NSCAssert(kr == KERN_SUCCESS, @"bootstrap_register failed: %d", kr);
-        
-        NSLog(@"reading memory at pc: 0x%llx", (uint64_t)pc);
-        uint8_t buffer[16];
-        mach_vm_size_t size = sizeof(buffer);
-        kr = vm_read_overwrite(task, (vm_address_t)pc, size, (mach_vm_address_t)buffer, &size);
-        if (kr == KERN_SUCCESS) {
-            NSLog(@"read %llu bytes from 0x%llx:", size, pc);
-            for (mach_vm_size_t i = 0; i < size; i++) {
-                printf("%02x ", buffer[i]);
-            }
-            printf("\n");
-        } else {
-            NSLog(@"mach_vm_read_overwrite failed: %d", kr);
-        }
-        
-        // create a test thread
-        arm_thread_state64_t test_state;
-        memcpy(&test_state, new_state, sizeof(arm_thread_state64_t));
-        __darwin_arm_thread_state64_set_pc_fptr(test_state, (void *)ptrauth_sign_unauthenticated(ptrauth_strip((void*)0x47474747470, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
-        thread_t test_thread;
-        kr = thread_create_running(task, ARM_THREAD_STATE64, (thread_state_t)&test_state, ARM_THREAD_STATE64_COUNT, &test_thread);
-        if(kr != KERN_SUCCESS)
-        {
-            NSLog(@"[createRemotePthread] ERROR: Failed to create running thread: %s.", mach_error_string(kr));
-        }
-        NSLog(@"created test thread: %d", test_thread);
-        
-        task_suspend(task);
-        return KERN_SUCCESS;
+    if (*flavor != ARM_THREAD_STATE64 || alreadyHandled) {
+        return KERN_FAILURE;
     }
+    alreadyHandled = YES;
+    
+    // set the bootstrap port back
+    task_set_bootstrap_port(task, bootstrap_port);
+    
+    const arm_thread_state64_t *old_state = (const arm_thread_state64_t*)old_state_;
+    arm_thread_state64_t *new_state = (arm_thread_state64_t*)new_state_;
+    
+    //NSLog(@"fault address: %p", __darwin_arm_thread_state64_get_pc_fptr(*new_state));
+    memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
+    //__darwin_arm_thread_state64_set_lr_fptr(*new_state, (void *)0x4242424200);
+    for (int i = 0; i < 29; i++) {
+        new_state->__x[i] = 0x4141414100 + i;
+    }
+    
+//    void *pc = __darwin_arm_thread_state64_get_pc_fptr(*new_state);
+//    pc = ptrauth_strip(pc, ptrauth_key_function_pointer);
+    
+    void *symbol = dlsym(RTLD_DEFAULT, "dlopen");
+    void *ptr1 = ptrauth_strip((void*)(symbol), ptrauth_key_function_pointer);
+    void *pc = ptrauth_sign_unauthenticated(ptr1, ptrauth_key_function_pointer, 0);
+    __darwin_arm_thread_state64_set_pc_fptr(*new_state, pc);
+    NSLog(@"resume address: %p", __darwin_arm_thread_state64_get_pc_fptr(*new_state));
+    *new_state_cnt = old_state_cnt;
+    
+    // i'm too lazy to pass mach port so let's give it to launchd
+    pid_t pid = 0;
+    kern_return_t kr = pid_for_task(task, &pid);
+    NSCAssert(kr == KERN_SUCCESS, @"pid_for_task failed: %d", kr);
+    char service_name[64];
+    snprintf(service_name, sizeof(service_name), "com.kdt.taskporthaxx.task_for_pid_%d", pid);
+    kr = bootstrap_register(bootstrap_port, service_name, task);
+    NSCAssert(kr == KERN_SUCCESS, @"bootstrap_register failed: %d", kr);
+    
+    NSLog(@"reading memory at pc: 0x%llx", (uint64_t)pc);
+    uint8_t buffer[16];
+    mach_vm_size_t size = sizeof(buffer);
+    kr = vm_read_overwrite(task, (vm_address_t)pc, size, (mach_vm_address_t)buffer, &size);
+    if (kr == KERN_SUCCESS) {
+        NSLog(@"read %llu bytes from 0x%llx:", size, pc);
+        for (mach_vm_size_t i = 0; i < size; i++) {
+            printf("%02x ", buffer[i]);
+        }
+        printf("\n");
+    } else {
+        NSLog(@"mach_vm_read_overwrite failed: %d", kr);
+    }
+    
     return KERN_SUCCESS;
 }
  

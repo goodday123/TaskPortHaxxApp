@@ -37,7 +37,7 @@ int spawn_launchd(void) {
     kern_return_t a = task_set_bootstrap_port(mach_task_self(), exception_port);
     NSCAssert(a == KERN_SUCCESS, @"task_set_bootstrap_port failed: %s", mach_error_string(a));
     
-    char *argv2[] = { "/Applications/Spotlight.app/Spotlight", NULL };
+    char *argv2[] = { "/usr/libexec/xpcproxy", NULL };
     posix_spawnattr_set_ptrauth_task_port_np(&attr, mach_task_self());
     posix_spawnattr_set_registered_ports_np(&attr, (mach_port_t[]){MACH_PORT_NULL, MACH_PORT_NULL, exception_port}, 3);
     posix_spawn(NULL, argv2[0], NULL, &attr, argv2, environ);
