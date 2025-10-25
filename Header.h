@@ -20,6 +20,7 @@ int posix_spawnattr_set_persona_np(const posix_spawnattr_t* __restrict, uid_t, u
 int posix_spawnattr_set_persona_uid_np(const posix_spawnattr_t* __restrict, uid_t);
 int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t* __restrict, uid_t);
 int posix_spawnattr_set_launch_type_np(posix_spawnattr_t *attr, uint8_t launch_type);
+int posix_spawnattr_set_ptrauth_task_port_np(posix_spawnattr_t * __restrict attr, mach_port_t port);
 int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
          exception_mask_t mask, mach_port_t new_port,
          exception_behavior_t behavior, thread_state_flavor_t flavor);

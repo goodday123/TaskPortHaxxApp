@@ -6,9 +6,25 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXCopyFilesBuildPhase section */
+		E123952A2EAC3EB700E9BD9F /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = /usr/share/man/man1/;
+			dstSubfolderSpec = 0;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 1;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		E116868B2EAC403100354987 /* control */ = {isa = PBXFileReference; lastKnownFileType = text; path = control; sourceTree = "<group>"; };
+		E116868C2EAC403100354987 /* Makefile */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
 		E118B6562EAB4BB1008050F8 /* jbdev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = jbdev.plist; sourceTree = "<group>"; };
 		E118B6572EAB4BB1008050F8 /* jbdev.build.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = jbdev.build.sh; sourceTree = "<group>"; };
+		E12393D02EABC72F00E9BD9F /* Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Header.h; sourceTree = "<group>"; };
+		E123952C2EAC3EB700E9BD9F /* opainject */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = opainject; sourceTree = BUILT_PRODUCTS_DIR; };
 		E15251882EAB4A6800F6E003 /* TaskPortHaxxApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TaskPortHaxxApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E152520A2EAB4B3300F6E003 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -25,6 +41,16 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		E11686A02EAC43D700354987 /* Resources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		E123952D2EAC3EB700E9BD9F /* opainject */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = opainject;
+			sourceTree = "<group>";
+		};
 		E152518A2EAB4A6800F6E003 /* TaskPortHaxxApp */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -36,6 +62,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		E12395292EAC3EB700E9BD9F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E15251852EAB4A6800F6E003 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -49,9 +82,14 @@
 		E152517F2EAB4A6700F6E003 = {
 			isa = PBXGroup;
 			children = (
+				E11686A02EAC43D700354987 /* Resources */,
+				E116868B2EAC403100354987 /* control */,
+				E116868C2EAC403100354987 /* Makefile */,
+				E12393D02EABC72F00E9BD9F /* Header.h */,
 				E118B6562EAB4BB1008050F8 /* jbdev.plist */,
 				E118B6572EAB4BB1008050F8 /* jbdev.build.sh */,
 				E152518A2EAB4A6800F6E003 /* TaskPortHaxxApp */,
+				E123952D2EAC3EB700E9BD9F /* opainject */,
 				E15251892EAB4A6800F6E003 /* Products */,
 				E152520A2EAB4B3300F6E003 /* Config.xcconfig */,
 			);
@@ -61,6 +99,7 @@
 			isa = PBXGroup;
 			children = (
 				E15251882EAB4A6800F6E003 /* TaskPortHaxxApp.app */,
+				E123952C2EAC3EB700E9BD9F /* opainject */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -68,6 +107,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		E123952B2EAC3EB700E9BD9F /* opainject */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E12395302EAC3EB700E9BD9F /* Build configuration list for PBXNativeTarget "opainject" */;
+			buildPhases = (
+				E12395282EAC3EB700E9BD9F /* Sources */,
+				E12395292EAC3EB700E9BD9F /* Frameworks */,
+				E123952A2EAC3EB700E9BD9F /* CopyFiles */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E123952D2EAC3EB700E9BD9F /* opainject */,
+			);
+			name = opainject;
+			packageProductDependencies = (
+			);
+			productName = opainject;
+			productReference = E123952C2EAC3EB700E9BD9F /* opainject */;
+			productType = "com.apple.product-type.tool";
+		};
 		E15251872EAB4A6800F6E003 /* TaskPortHaxxApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = E15251A02EAB4A6900F6E003 /* Build configuration list for PBXNativeTarget "TaskPortHaxxApp" */;
@@ -100,6 +161,9 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
+					E123952B2EAC3EB700E9BD9F = {
+						CreatedOnToolsVersion = 26.0;
+					};
 					E15251872EAB4A6800F6E003 = {
 						CreatedOnToolsVersion = 26.0;
 					};
@@ -120,6 +184,7 @@
 			projectRoot = "";
 			targets = (
 				E15251872EAB4A6800F6E003 /* TaskPortHaxxApp */,
+				E123952B2EAC3EB700E9BD9F /* opainject */,
 			);
 		};
 /* End PBXProject section */
@@ -155,6 +220,13 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		E12395282EAC3EB700E9BD9F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E15251842EAB4A6800F6E003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -165,6 +237,28 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		E12395312EAC3EB700E9BD9F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		E12395322EAC3EB700E9BD9F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
 		E15251A12EAB4A6900F6E003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -346,6 +440,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		E12395302EAC3EB700E9BD9F /* Build configuration list for PBXNativeTarget "opainject" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E12395312EAC3EB700E9BD9F /* Debug */,
+				E12395322EAC3EB700E9BD9F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		E15251832EAB4A6800F6E003 /* Build configuration list for PBXProject "TaskPortHaxxApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
