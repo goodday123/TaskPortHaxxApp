@@ -19,10 +19,6 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.exceptionPort = setup_exception_server();
-    self.childPid = -1;
-    self.sleepPid = spawn_sleep_process();
-    
     self.navigationItem.title = @"Task Port Haxx";
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
@@ -39,6 +35,10 @@
     [self.view addSubview:textView];
     self.logTextView = textView;
     [self redirectStdio];
+    
+    self.exceptionPort = setup_exception_server();
+    self.childPid = -1;
+    //self.sleepPid = spawn_sleep_process();
 }
 
 - (void)redirectStdio {
@@ -79,11 +79,16 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        //xpc_object_t bootstrap_pipe = ((struct xpc_global_data *)_os_alloc_once_table[OS_ALLOC_ONCE_KEY_LIBXPC].ptr)->xpc_bootstrap_pipe;
         
         vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         printf("Mapped memory at 0x%llx\n", map);
         RemoteWriteString(map, "/tmp/.it_works");
         RemoteArbCall(mkdir, map, 0700);
+        
+        // submit a launch job to launchd to spawn a root process
+        
+        //(int)task_get_special_port((int)mach_task_self(), 4, &port); port
         // Can't JIT :(
 //        void *ptrace = dlsym(RTLD_DEFAULT, "ptrace");
 //        RemoteArbCall(ptrace, PT_ATTACHEXC, self.sleepPid, 0, 0);
@@ -101,7 +106,9 @@
 }
 
 - (void)detachButtonTapped {
-    wantsDetach = YES;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        RemoteDetach();
+    });
 }
 
 - (void)alertWithTitle:(NSString *)title message:(NSString *)message {

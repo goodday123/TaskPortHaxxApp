@@ -16,6 +16,7 @@ uint64_t RemoteRead64(uint64_t address);
 void RemoteWrite64(uint64_t address, uint64_t value);
 void RemoteWriteMemory(uint64_t address, const void *data, size_t length);
 void RemoteWriteString(uint64_t address, const char *string);
+void RemoteDetach(void);
 
 #define PT_DETACH 11
 #define PT_ATTACHEXC 14

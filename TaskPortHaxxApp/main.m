@@ -30,9 +30,12 @@ int child_execve(void) {
     }
     
     // Purposefully crash it to get its task port
-    char *argv2[] = { "/usr/libexec/xpcproxy", NULL };
-    posix_spawnattr_set_ptrauth_task_port_np(&attr, mach_task_self());
+//    mach_port_t parent_task_port = MACH_PORT_NULL;
+//    task_for_pid(mach_task_self(), getppid(), &parent_task_port);
+//    assert(parent_task_port != MACH_PORT_NULL);
+//    posix_spawnattr_set_ptrauth_task_port_np(&attr, parent_task_port);
     posix_spawnattr_set_registered_ports_np(&attr, (mach_port_t[]){0, bootstrap_port, exception_port}, 3);
+    char *argv2[] = { "/usr/libexec/xpcproxy", NULL };
     posix_spawn(NULL, argv2[0], NULL, &attr, argv2, environ);
     perror("posix_spawn");
     return 1;

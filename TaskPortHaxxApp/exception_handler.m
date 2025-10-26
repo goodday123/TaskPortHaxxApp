@@ -35,12 +35,31 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
                                                          thread_state_t new_state_,
                                                          mach_msg_type_number_t *new_state_cnt)
 {
-    printf("exception handler raise state - exception %d\n", exception);
     if (*flavor != ARM_THREAD_STATE64) {
         return KERN_FAILURE;
     }
     
     const _STRUCT_ARM_THREAD_STATE64 *old_state = (const arm_thread_state64_t*)old_state_;
+    new_state = (arm_thread_state64_t*)new_state_;
+    memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
+    *new_state_cnt = old_state_cnt;
+    
+    static uint64_t pacFailedCount = 0;
+    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && code[0] == 1 && (code[1] >> 36) == 0x2000000) {
+        // PAC issue
+        pacFailedCount++;
+        if ((pacFailedCount % 92792) == 0) {
+            printf("PAC failure detected! total count: %llu\n", pacFailedCount);
+            printf("current_pc: 0x%016llx\n", old_state->__x[31]);
+            printf("0x%016llx\n", ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40));
+        }
+        
+        uint64_t tmp = ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40);
+        new_state->__x[31] = tmp;
+        return KERN_SUCCESS;
+    }
+    
+    printf("exception handler raise state - exception %d\n", exception);
     if (num_exceptions_handled == 0) {
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
@@ -69,11 +88,8 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         }
     }
     
-    new_state = (arm_thread_state64_t*)new_state_;
-    memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
-    *new_state_cnt = old_state_cnt;
-    __darwin_arm_thread_state64_set_pc_fptr(*new_state, brX16Address);
-    __darwin_arm_thread_state64_set_lr_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)0x41414100, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
+    __darwin_arm_thread_state64_set_pc_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)brX16Address, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
+    //__darwin_arm_thread_state64_set_lr_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)0x41414100, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     //new_state->__x[16] = (uint64_t)ptrauth_strip(dlsym(RTLD_DEFAULT, "sleep"), ptrauth_key_function_pointer);
     dispatch_semaphore_wait(sem_input_ready, DISPATCH_TIME_FOREVER);
     if (new_state->__x[16] == _tmp_ptr) {
@@ -118,6 +134,13 @@ mach_port_t setup_exception_server(void) {
     uint32_t *func = ((uint32_t *)ptrauth_strip((void *)fcntl, ptrauth_key_function_pointer));
     for (; *func != 0xd61f0200; func++) {}
     brX16Address = (void *)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
+    
+    printf("INFO of br x16 address:\n");
+    printf("Unsigned: 0x%16llx\n", (uint64_t)func);
+    printf("Signed:   0x%16llx\n", (uint64_t)brX16Address);
+    brX16Address = (void *)func;
+    printf("Signed2:  0x%16llx\n", (uint64_t)brX16Address);
+    brX16Address = (void *)0xb62cd70206b89848;
     
     mach_port_t server_port;
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
@@ -188,4 +211,11 @@ void RemoteWriteMemory(uint64_t address, const void *data, size_t length) {
 void RemoteWriteString(uint64_t address, const char *string) {
     size_t len = (strlen(string) + 7) & ~7ULL;
     RemoteWriteMemory(address, string, len);
+}
+
+void RemoteDetach(void) {
+    // kill(SIGSTOP)
+    // task_set_exception_ports
+    mach_port_t task = (mach_port_t)RemoteArbCall(task_self_trap);
+    RemoteArbCall(task_set_exception_ports, task, 2, 0, 1, 0);
 }
