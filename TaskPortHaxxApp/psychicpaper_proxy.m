@@ -21,7 +21,7 @@
 #include <Foundation/Foundation.h>
 #include "Header.h"
 
-extern void (*brX16Address)(void);
+extern uintptr_t brX16Address;
 extern char *_LIBC_CSTR *_LIBC_NULL_TERMINATED *_NSGetArgv(void);
 extern int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, mach_port_t portarray[], uint32_t count);
 extern kern_return_t
@@ -132,7 +132,7 @@ static int handler(mach_port_t port, callback_t cb, void *arg)
 #endif
         //req.state.__pc = (ptrtype)pc;
         req.state.__x[16] = print_pc;
-        __darwin_arm_thread_state64_set_pc_fptr(req.state, brX16Address);
+        __darwin_arm_thread_state64_set_pc_fptr(req.state, (void *)brX16Address);
         NSLog(@"Calling 0x%llx", (uint64_t)print_pc);
 
         Reply rep = {};

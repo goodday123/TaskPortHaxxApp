@@ -5,9 +5,15 @@
 //  Created by Duy Tran on 24/10/25.
 //
 
+@import Darwin;
 #import "ViewController.h"
 #include "Header.h"
 #include <sys/wait.h>
+
+/*
+ - ptr: 0x1d08190206b89848
+ - diversifier: 0xb4000000
+ */
 
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
@@ -25,7 +31,6 @@
         [[UIBarButtonItem alloc] initWithTitle:@"Arb Call" style:UIBarButtonItemStylePlain target:self action:@selector(arbCallButtonTapped)],
         [[UIBarButtonItem alloc] initWithTitle:@"Detach" style:UIBarButtonItemStylePlain target:self action:@selector(detachButtonTapped)]
     ];
-        
     
     UITextView *textView = [[UITextView alloc] initWithFrame:self.view.bounds];
     textView.editable = NO;
@@ -79,13 +84,12 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        //RemoteArbCall((void*)0x4141BAC0);
-        RemoteArbCall((void*)raise, SIGTRAP);
+        RemoteArbCall((void*)dlopen, 0x41414141, 0);
         
-//        vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-//        printf("Mapped memory at 0x%llx\n", map);
-//        RemoteWriteString(map, "/tmp/.it_works");
-//        RemoteArbCall(mkdir, map, 0700);
+        //vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        //printf("Mapped memory at 0x%llx\n", map);
+        //RemoteWriteString(map, "/tmp/.it_works");
+        //RemoteArbCall(mkdir, map, 0700);
         
         // submit a launch job to launchd to spawn a root process
         

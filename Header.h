@@ -21,7 +21,8 @@ void RemoteDetach(void);
 #define PT_DETACH 11
 #define PT_ATTACHEXC 14
 
-void (*brX16Address)(void);
+uintptr_t brX16Address;
+uint32_t expectedDiversifier;
 BOOL wantsDetach;
 mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
@@ -49,3 +50,7 @@ mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
 pid_t spawn_sleep_process(void);
 mach_port_t psychicpaper_proxy(mach_port_t task);
+
+@interface NSProcessInfo(Private)
+- (NSDate *)systemStartTime;
+@end

