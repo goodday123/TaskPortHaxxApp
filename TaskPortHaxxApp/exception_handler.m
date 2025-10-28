@@ -22,7 +22,7 @@
 dispatch_semaphore_t sem_input_ready;
 dispatch_semaphore_t sem_output_ready;
 int num_exceptions_handled = 0;
-arm_thread_state64_t *new_state;
+_STRUCT_ARM_THREAD_STATE64 *new_state;
 kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_port,
                                                          mach_port_t thread,
                                                          mach_port_t task,
@@ -40,23 +40,32 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     }
     
     const _STRUCT_ARM_THREAD_STATE64 *old_state = (const arm_thread_state64_t*)old_state_;
-    new_state = (arm_thread_state64_t*)new_state_;
+    new_state = (_STRUCT_ARM_THREAD_STATE64 *)new_state_;
     memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
     *new_state_cnt = old_state_cnt;
     
+    uint64_t ptrL = code[1] & 0xFFFFFFFFF;
+    uint64_t ptrR = (uint64_t)brX16Address & 0xFFFFFFFFF;
+    
     static uint64_t pacFailedCount = 0;
-    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && code[0] == 1 && (code[1] >> 36) == 0x2000000) {
+    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && code[0] == 1 && ptrL == ptrR) {
+        //printf("Handling PAC failure exception\n");
         // PAC issue
         pacFailedCount++;
-        if ((pacFailedCount % 92792) == 0) {
-            printf("PAC failure detected! total count: %llu\n", pacFailedCount);
-            printf("current_pc: 0x%016llx\n", old_state->__x[31]);
+        if ((pacFailedCount % 99999) == 0) {
+            printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
             printf("0x%016llx\n", ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40));
         }
         
         uint64_t tmp = ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40);
-        new_state->__x[31] = tmp;
+        
+        __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)tmp);
         return KERN_SUCCESS;
+        
+//        printf("PAC failure detected?\n");
+//        return KERN_FAILURE;
+    } else if (ptrL != ptrR) {
+        printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016llx)\n", code[0], ptrL, ptrR);
     }
     
     printf("exception handler raise state - exception %d\n", exception);
@@ -136,11 +145,10 @@ mach_port_t setup_exception_server(void) {
     brX16Address = (void *)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
     
     printf("INFO of br x16 address:\n");
-    printf("Unsigned: 0x%16llx\n", (uint64_t)func);
-    printf("Signed:   0x%16llx\n", (uint64_t)brX16Address);
+    printf("Unsigned: 0x%016llx\n", (uint64_t)func);
+    printf("Signed:   0x%016llx\n", (uint64_t)brX16Address);
     brX16Address = (void *)func;
-    printf("Signed2:  0x%16llx\n", (uint64_t)brX16Address);
-    brX16Address = (void *)0xb62cd70206b89848;
+    printf("Signed2:  0x%016llx\n", (uint64_t)brX16Address);
     
     mach_port_t server_port;
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
