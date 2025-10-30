@@ -10,11 +10,6 @@
 #include "Header.h"
 #include <sys/wait.h>
 
-/*
- - ptr: 0x1d08190206b89848
- - diversifier: 0xb4000000
- */
-
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
 @property(nonatomic) pid_t childPid, sleepPid;
@@ -84,7 +79,10 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        RemoteArbCall((void*)sleep, 1, 0);
+        printf("--- MARK: DONE FUNCTION CALL 1 ---\n");
         RemoteArbCall((void*)dlopen, 0x41414141, 0);
+        printf("--- MARK: DONE FUNCTION CALL 2 ---\n");
         
         //vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         //printf("Mapped memory at 0x%llx\n", map);

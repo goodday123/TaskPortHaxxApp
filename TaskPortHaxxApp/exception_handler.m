@@ -54,22 +54,20 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
     *new_state_cnt = old_state_cnt;
     
-    uint64_t ptrL = code[1] & 0xFFFFFFFFF;
-    uint64_t ptrR = (uint64_t)brX16Address & 0xFFFFFFFFF;
+//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
+//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
+//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
+    new_state->__flags &= ~0b1110; // clear some flags
+    
+    uint32_t ptrL = (uint32_t)code[1];
+    uint32_t ptrR = (uint32_t)brX16Address;
     static uint64_t pacFailedCount = 0;
     static uint64_t pacBruteForcedPtr = 0;
-    static uint32_t pacBruteForcedDiversifier = 0;
-    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && (code[0] == 1 || code[0] == 257) && (ptrL == ptrR || ptrL == 0xFFFFFFFFF)) {
-        uint32_t diversifier = new_state->__flags & 0xff000000;
-        if (!expectedDiversifier) {
-            // Attempt to brute-force PAC
-            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | (pacFailedCount << 40);
-            pacBruteForcedDiversifier = diversifier;
-            __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
-        } else {
-            //printf("diversifier: 0x%08x expected: 0x%08x\n", diversifier, expectedDiversifier);
-            pacBruteForcedPtr = brX16Address;
-        }
+    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && (code[0] == 1 || code[0] == 257) && (ptrL == ptrR || ptrL == 0xFFFFFFFF)) {
+        // Attempt to brute-force PAC
+        // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
+        pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+        __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
         pacFailedCount++;
         if ((pacFailedCount % 99999) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
@@ -80,22 +78,21 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
 //        printf("PAC failure detected?\n");
 //        return KERN_FAILURE;
     } else if (ptrL != ptrR) {
-        printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016llx)\n", code[0], ptrL, ptrR);
+        printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
     }
     
     printf("exception handler raise state - exception %d\n", exception);
     if(pacBruteForcedPtr) {
         printf("MAYBE PAC HAS BEEN BRUTE FORCED!\n");
         printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
-        printf("- diversifier: 0x%08x\n", pacBruteForcedDiversifier);
         brX16Address = pacBruteForcedPtr;
-        expectedDiversifier = pacBruteForcedDiversifier;
     }
     
     if (num_exceptions_handled == 0) {
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
         GlobalChildThreadPort = thread;
+        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
     } else {
         dispatch_semaphore_signal(sem_output_ready);
         if ((old_state->__lr & 0xFFFFFF00) != 0x41414100 || wantsDetach) {
@@ -116,12 +113,11 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
                    old_state->__x[10], old_state->__x[11], old_state->__x[12], old_state->__x[13], old_state->__x[14], old_state->__x[15], old_state->__x[16], old_state->__x[17], old_state->__x[18], old_state->__x[19],
                    old_state->__x[20], old_state->__x[21], old_state->__x[22], old_state->__x[23], old_state->__x[24], old_state->__x[25], old_state->__x[26], old_state->__x[27], old_state->__x[28],
                    old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
-            //return KERN_FAILURE;
+            return KERN_FAILURE;
         }
     }
     
     __darwin_arm_thread_state64_set_pc_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)brX16Address, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
-    //__darwin_arm_thread_state64_set_lr_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)0x41414100, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     //new_state->__x[16] = (uint64_t)ptrauth_strip(dlsym(RTLD_DEFAULT, "sleep"), ptrauth_key_function_pointer);
     dispatch_semaphore_wait(sem_input_ready, DISPATCH_TIME_FOREVER);
     if (new_state->__x[16] == _tmp_ptr) {

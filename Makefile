@@ -1,6 +1,6 @@
 TARGET := iphone:clang:latest:15.0
 INSTALL_TARGET_PROCESSES = TaskPortHaxxApp
-ARCHS = arm64 arm64e
+ARCHS = arm64
 PACKAGE_FORMAT = ipa
 
 include $(THEOS)/makefiles/common.mk

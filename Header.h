@@ -22,7 +22,6 @@ void RemoteDetach(void);
 #define PT_ATTACHEXC 14
 
 uintptr_t brX16Address;
-uint32_t expectedDiversifier;
 BOOL wantsDetach;
 mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
