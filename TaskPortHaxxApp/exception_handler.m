@@ -138,7 +138,8 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     if (num_exceptions_handled > 0) {
         dispatch_semaphore_signal(sem_output_ready);
-        if ((old_state->__lr & 0xFFFFFF00) != 0x41414100 || wantsDetach) {
+        if (((old_state->__lr & 0xFFFFFF00) != 0x41414100 &&
+             (old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00) || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             printf("Registers:\n"
