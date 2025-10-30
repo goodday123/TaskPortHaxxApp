@@ -53,3 +53,10 @@ mach_port_t psychicpaper_proxy(mach_port_t task);
 @interface NSProcessInfo(Private)
 - (NSDate *)systemStartTime;
 @end
+
+uint64_t signed_pointer;
+uint32_t signed_diversifier;
+@interface NSUserDefaults(Private)
+@property(nonatomic) NSUInteger signedPointer;
+@property(nonatomic) uint32_t signedDiversifier;
+@end

@@ -21,6 +21,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.navigationItem.title = @"Task Port Haxx";
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Ptr" style:UIBarButtonItemStylePlain target:self action:@selector(changePtrTapped)];
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
         [[UIBarButtonItem alloc] initWithTitle:@"Arb Call" style:UIBarButtonItemStylePlain target:self action:@selector(arbCallButtonTapped)],
@@ -69,6 +70,32 @@
     });
 }
 
+- (void)changePtrTapped {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Change Signed Pointer" message:@"Enter new signed pointer and diversifier value (hex):" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"Signed Pointer (hex)";
+        textField.keyboardType = UIKeyboardTypeDefault;
+        textField.text = [NSString stringWithFormat:@"0x%lx", NSUserDefaults.standardUserDefaults.signedPointer];
+    }];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"Diversifier (hex)";
+        textField.keyboardType = UIKeyboardTypeDefault;
+        textField.text = [NSString stringWithFormat:@"0x%x", NSUserDefaults.standardUserDefaults.signedDiversifier];
+    }];
+    UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UITextField *textField = alert.textFields.firstObject;
+        NSUInteger signedPointer = strtoull(textField.text.UTF8String, NULL, 16);
+        uint32_t diversifier = (uint32_t)strtoul(alert.textFields[1].text.UTF8String, NULL, 16);
+        NSUserDefaults.standardUserDefaults.signedPointer = signedPointer;
+        NSUserDefaults.standardUserDefaults.signedDiversifier = diversifier;
+        printf("Set signed pointer to 0x%lx\n", signedPointer);
+    }];
+    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil];
+    [alert addAction:okAction];
+    [alert addAction:cancelAction];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)testButtonTapped {
     if (getpgid(_childPid) > 0) {
         printf("Child already spawned with PID %d\n", self.childPid);
@@ -79,10 +106,10 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        RemoteArbCall((void*)sleep, 1, 0);
-        printf("--- MARK: DONE FUNCTION CALL 1 ---\n");
+        //RemoteArbCall((void*)sleep, 1, 0);
+        //printf("--- MARK: DONE FUNCTION CALL 1 ---\n");
         RemoteArbCall((void*)dlopen, 0x41414141, 0);
-        printf("--- MARK: DONE FUNCTION CALL 2 ---\n");
+        printf("--- MARK: DONE FUNCTION CALL ---\n");
         
         //vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         //printf("Mapped memory at 0x%llx\n", map);
@@ -121,4 +148,19 @@
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+@end
+
+@implementation NSUserDefaults(Pref)
+- (void)setSignedPointer:(NSUInteger)signedPointer {
+    [self setObject:@(signed_pointer = signedPointer) forKey:@"signedPointer"];
+}
+- (NSUInteger)signedPointer {
+    return signed_pointer = [[self objectForKey:@"signedPointer"] unsignedIntegerValue];
+}
+- (void)setSignedDiversifier:(uint32_t)signedDiversifier {
+    [self setObject:@(signedDiversifier) forKey:@"signedDiversifier"];
+}
+- (uint32_t)signedDiversifier {
+    return [[self objectForKey:@"signedDiversifier"] unsignedIntValue];
+}
 @end

