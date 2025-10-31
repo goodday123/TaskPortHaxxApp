@@ -69,19 +69,18 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
         GlobalChildThreadPort = thread;
-        //__darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
         signed_pointer = NSUserDefaults.standardUserDefaults.signedPointer;
         signed_diversifier = (uint32_t)NSUserDefaults.standardUserDefaults.signedDiversifier;
         if (signed_pointer != 0) {
             pacBruteForcedPtr = signed_pointer;
         }
-        lastLR = old_state->__lr & 0xFFFFFFFFF;
+        lastLR = (old_state->__lr & 0xFFFFFFFFF) + 4;
     }
     
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
-    new_state->__flags &= ~0b1110; // clear some flags
+    new_state->__flags &= ~4; // clear some flags
     
     uint32_t ptrL = (uint32_t)code[1];
     uint32_t ptrR = (uint32_t)brX16Address;
@@ -99,10 +98,27 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
             pacBruteForcedPtr = signed_pointer;
             if (signed_diversifier != 0 && lastDiversifier == signed_diversifier) {
                 // The saved pointer is no longer working, start brute-forcing again
-                NSUserDefaults.standardUserDefaults.signedPointer = 0;
-                NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
+                //NSUserDefaults.standardUserDefaults.signedPointer = 0;
+                //NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
                 printf("Saved signed pointer no longer valid, starting brute-force again\n");
+                printf("exception=%d code[0]=%llu code[1]=0x%016llx\n", exception, code[0], code[1]);
+                printf("ptrL=0x%08x ptrR=0x%08x\n", ptrL, ptrR);
             }
+            
+            static uint8_t matchedDiversifiers[0x100] = {0};
+            static int printDivCnt = 0;
+            if (printDivCnt < 1000) {
+                matchedDiversifiers[diversifier >> 24] = 1;
+                //printf("Diversifier 0x%08x\n", diversifier >> 24);
+            } else if (printDivCnt == 1000) {
+                printf("After 1000 tries, diversifier not found are:\n");
+                for (int i = 0; i < 0x100; i++) {
+                    if (matchedDiversifiers[i] == 0) {
+                        printf("0x%02x\n", i);
+                    }
+                }
+            }
+            printDivCnt++;
         }
         lastDiversifier = diversifier;
         
@@ -124,7 +140,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     //printf("exception handler raise state - exception %d\n", exception);
     if(pacBruteForcedPtr && num_exceptions_handled > 0) {
         printf("PAC brute forced!\n");
-        //printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
+        printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
         signed_diversifier = 0; // make it so we never reach the reset condition anymore
         brX16Address = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
@@ -134,6 +150,8 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     if (num_exceptions_handled > 0) {
         dispatch_semaphore_signal(sem_output_ready);
         if ((old_state->__lr&0xFFFFFFFFF) != lastLR || wantsDetach) {
+            printf("cur lr: 0x%llx, last lr: 0x%llx\n", old_state->__lr & 0xFFFFFFFFF, lastLR);
+            
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             printf("Registers:\n"
