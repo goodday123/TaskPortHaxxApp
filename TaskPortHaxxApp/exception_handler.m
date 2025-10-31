@@ -6,6 +6,7 @@
 //
 
 #import <UIKit/UIKit.h>
+@import MachO;
 #import <os/lock.h>
 #import "AppDelegate.h"
 #include "Header.h"
@@ -25,15 +26,26 @@
  00000001954b2618    ret
  */
 
-typedef struct {
-    uint64_t __x[29];       /* General purpose registers x0-x28 */
-    uint64_t __fp; /* Frame pointer x29 */
-    uint64_t __lr; /* Link register x30 */
-    uint64_t __sp; /* Stack pointer x31 */
-    uint64_t __pc; /* Program counter */
-    uint32_t __cpsr;        /* Current program status register */
-    uint32_t __flags; /* Flags describing structure format */
-} arm_thread_state64_internal;
+struct dyld_all_image_infos *_alt_dyld_get_all_image_infos(void) {
+    static struct dyld_all_image_infos *result;
+    if (result) {
+        return result;
+    }
+    struct task_dyld_info dyld_info;
+    mach_vm_address_t image_infos;
+    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+    kern_return_t ret;
+    ret = task_info(mach_task_self_,
+                    TASK_DYLD_INFO,
+                    (task_info_t)&dyld_info,
+                    &count);
+    if (ret != KERN_SUCCESS) {
+        return NULL;
+    }
+    image_infos = dyld_info.all_image_info_addr;
+    result = (struct dyld_all_image_infos *)image_infos;
+    return result;
+}
 
 dispatch_semaphore_t sem_input_ready;
 dispatch_semaphore_t sem_output_ready;
@@ -63,7 +75,6 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     static uint64_t pacFailedCount = 0;
     static uint64_t pacBruteForcedPtr = 0;
     static uint32_t lastDiversifier = 0;
-    static uint64_t lastLR = 0;
     
     if (num_exceptions_handled == 0) {
         printf("got task port: %d\n", task);
@@ -74,13 +85,13 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if (signed_pointer != 0) {
             pacBruteForcedPtr = signed_pointer;
         }
-        lastLR = (old_state->__lr & 0xFFFFFFFFF) + 4;
+        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0xFFFFFF00);
     }
     
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
-    new_state->__flags &= ~4; // clear some flags
+    new_state->__flags &= ~0b1110; // clear some flags
     
     uint32_t ptrL = (uint32_t)code[1];
     uint32_t ptrR = (uint32_t)brX16Address;
@@ -96,29 +107,6 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
             pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 40) & ~0x0080000000000000);
         } else if (signed_pointer == pacBruteForcedPtr) {
             pacBruteForcedPtr = signed_pointer;
-            if (signed_diversifier != 0 && lastDiversifier == signed_diversifier) {
-                // The saved pointer is no longer working, start brute-forcing again
-                //NSUserDefaults.standardUserDefaults.signedPointer = 0;
-                //NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
-                printf("Saved signed pointer no longer valid, starting brute-force again\n");
-                printf("exception=%d code[0]=%llu code[1]=0x%016llx\n", exception, code[0], code[1]);
-                printf("ptrL=0x%08x ptrR=0x%08x\n", ptrL, ptrR);
-            }
-            
-            static uint8_t matchedDiversifiers[0x100] = {0};
-            static int printDivCnt = 0;
-            if (printDivCnt < 1000) {
-                matchedDiversifiers[diversifier >> 24] = 1;
-                //printf("Diversifier 0x%08x\n", diversifier >> 24);
-            } else if (printDivCnt == 1000) {
-                printf("After 1000 tries, diversifier not found are:\n");
-                for (int i = 0; i < 0x100; i++) {
-                    if (matchedDiversifiers[i] == 0) {
-                        printf("0x%02x\n", i);
-                    }
-                }
-            }
-            printDivCnt++;
         }
         lastDiversifier = diversifier;
         
@@ -130,9 +118,6 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         }
         
         return KERN_SUCCESS;
-        
-        //        printf("PAC failure detected?\n");
-        //        return KERN_FAILURE;
     } else if (ptrL != ptrR) {
         //printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
     }
@@ -141,7 +126,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     if(pacBruteForcedPtr && num_exceptions_handled > 0) {
         printf("PAC brute forced!\n");
         printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
-        signed_diversifier = 0; // make it so we never reach the reset condition anymore
+        printf("- div: 0x%08x\n", lastDiversifier);
         brX16Address = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedDiversifier = lastDiversifier;
@@ -149,9 +134,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     if (num_exceptions_handled > 0) {
         dispatch_semaphore_signal(sem_output_ready);
-        if ((old_state->__lr&0xFFFFFFFFF) != lastLR || wantsDetach) {
-            printf("cur lr: 0x%llx, last lr: 0x%llx\n", old_state->__lr & 0xFFFFFFFFF, lastLR);
-            
+        if ((old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00 || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             printf("Registers:\n"
@@ -192,12 +175,7 @@ static void exception_server(mach_port_t exceptionPort, BOOL shouldExitOnExcepti
     do {
         rt = mach_msg((mach_msg_header_t *)&msg, MACH_RCV_MSG, 0, sizeof(union __RequestUnion__mach_exc_subsystem), exceptionPort, 0, MACH_PORT_NULL);
         assert(rt == MACH_MSG_SUCCESS);
-        // Call out to the mach_exc_server generated by mig and mach_exc.defs.
-        // This will in turn invoke one of:
-        // mach_catch_exception_raise()
-        // mach_catch_exception_raise_state()
-        // mach_catch_exception_raise_state_identity()
-        // .. depending on the behavior specified when registering the Mach exception port.
+        
         handled = mach_exc_server((mach_msg_header_t *)&msg, (mach_msg_header_t *)&reply);
  
         // Send the now-initialized reply
@@ -214,10 +192,20 @@ mach_port_t setup_exception_server(void) {
     uint32_t *func = ((uint32_t *)ptrauth_strip((void *)fcntl, ptrauth_key_function_pointer));
     for (; *func != 0xd61f0200; func++) {}
     brX16Address = (uint64_t)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
+    printf("Found br x16 at address: 0x%016lx\n", brX16Address);
     
-    printf("INFO of br x16 address:\n");
-    printf("Unsigned: 0x%016llx\n", (uint64_t)func);
-    printf("Signed:   0x%016llx\n", (uint64_t)brX16Address);
+    // if br x16 != saved address, clear saved address
+    if (signed_pointer != 0 && (brX16Address&0xFFFFFFFFF) != (signed_pointer&0xFFFFFFFFF)) {
+        printf("br x16 address changed, clearing saved signed pointer\n");
+        NSUserDefaults.standardUserDefaults.signedPointer = 0;
+    }
+    
+    // find blr x19
+    uint64_t dyldBase = (uint64_t)_alt_dyld_get_all_image_infos()->dyldImageLoadAddress;
+    func = (uint32_t *)dyldBase;
+    for (; *func != 0xd63f0260; func++) {}
+    blrX19Offset = (uint64_t)func - dyldBase;
+    printf("Found blr x19 at offset: 0x%016lx\n", blrX19Offset);
     
     mach_port_t server_port;
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
@@ -232,28 +220,23 @@ mach_port_t setup_exception_server(void) {
     return server_port;
 }
 
-// unused
-kern_return_t catch_mach_exception_raise_state (mach_port_t exception_port,
-                                                exception_type_t exception,
-                                                const mach_exception_data_t code,
-                                                mach_msg_type_number_t code_cnt,
-                                                int *flavor,
-                                                const thread_state_t old_state_,
-                                                mach_msg_type_number_t old_state_cnt,
-                                                thread_state_t new_state_,
-                                                mach_msg_type_number_t *new_state_cnt)
-{
-    // unused
-    return KERN_FAILURE;
-}
-kern_return_t catch_mach_exception_raise (mach_port_t exception_port,
-                                         mach_port_t thread,
-                                         mach_port_t task,
-                                         exception_type_t exception,
-                                         mach_exception_data_t code,
-                                         mach_msg_type_number_t codeCnt) {
-   printf("catch_mach_exception_raise called\n");
-   return KERN_FAILURE;
+uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
+    /*
+     dyld`___ZZNK5dyld46Loader25findAndRunAllInitializersERNS_12RuntimeStateEENK3$_0clEv_block_invoke
+     0x1006681c8 <+164>: blr    x19
+     0x1006681cc <+168>: add    x0, sp, #0x10
+     0x1006681d0 <+172>: bl     0x10064166c               ; dyld3::ScopedTimer::endTimer()
+     0x1006681d4 <+176>: ldp    x29, x30, [sp, #0xa0]
+     0x1006681d8 <+180>: ldp    x20, x19, [sp, #0x90]
+     0x1006681dc <+184>: ldp    x22, x21, [sp, #0x80]
+     0x1006681e0 <+188>: add    sp, sp, #0xb0
+     0x1006681e4 <+192>: retab
+     */
+    uint64_t sp = new_state->__sp; xpaci(sp);
+    //printf("Writing to stack at 0x%016llx\n", sp+0xa8);
+    RemoteWrite64(sp + 0xa8, 0xFFFFFF00);
+    new_state->__x[19] = pc;
+    return RemoteArbCallInternal(name, blrX19Address, args, argCount);
 }
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
@@ -273,7 +256,7 @@ uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int arg
 }
 
 uint32_t RemoteRead32(uint64_t address) {
-    return RemoteArbCall(__atomic_load_4, address, 3);
+    return (uint32_t)RemoteArbCall(__atomic_load_4, address, 3);
 }
 uint64_t RemoteRead64(uint64_t address) {
     return RemoteArbCall(__atomic_load_8, address, 3);

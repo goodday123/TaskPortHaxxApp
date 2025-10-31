@@ -202,7 +202,12 @@ mig_internal novalue _Xmach_exception_raise
 		{ MIG_RETURN_ERROR(OutP, check_result); }
 #endif	/* defined(__MIG_check__Request__mach_exception_raise_t__defined) */
 
-	OutP->RetCode = catch_mach_exception_raise(In0P->Head.msgh_request_port, In0P->thread.name, In0P->task.name, In0P->exception, In0P->code, In0P->codeCnt);
+#if 0
+    OutP->RetCode = catch_mach_exception_raise(In0P->Head.msgh_request_port, In0P->thread.name, In0P->task.name, In0P->exception, In0P->code, In0P->codeCnt);
+#else
+    // We don't use this
+    OutP->RetCode = KERN_FAILURE;
+#endif
 
 	OutP->NDR = NDR_record;
 
@@ -318,7 +323,12 @@ mig_internal novalue _Xmach_exception_raise_state
 
 	OutP->new_stateCnt = 1296;
 
+#if 0
 	OutP->RetCode = catch_mach_exception_raise_state(In0P->Head.msgh_request_port, In0P->exception, In0P->code, In0P->codeCnt, &In1P->flavor, In1P->old_state, In1P->old_stateCnt, OutP->new_state, &OutP->new_stateCnt);
+#else
+    // We don't use this
+    OutP->RetCode = KERN_FAILURE;
+#endif
 	if (OutP->RetCode != KERN_SUCCESS) {
 		MIG_RETURN_ERROR(OutP, OutP->RetCode);
 	}

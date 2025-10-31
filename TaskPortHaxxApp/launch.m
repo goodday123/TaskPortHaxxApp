@@ -8,7 +8,7 @@
 @import Foundation;
 #import "Header.h"
 
-xpc_object_t generateDictCF(void) {
+BOOL launchTest(NSString *arg1) {
     NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
     NSString *execPath = NSBundle.mainBundle.executablePath;
     NSDictionary *plist = @{
@@ -26,14 +26,14 @@ xpc_object_t generateDictCF(void) {
                    bundleID, arc4random_uniform(10000)],
         @"MaterializeDatalessFiles": @YES,
         //@"Program": execPath,
-        @"ProgramArguments": @[ execPath ],
+        @"ProgramArguments": arg1 ? @[ execPath, arg1 ] : @[ execPath ],
         @"MachServices": @{},
         @"EnvironmentVariables": @{
             @"TMPDIR": @"/var/tmp",
             @"HOME": @"/var/root",
             @"CFFIXED_USER_HOME": @"/var/root"
         },
-        @"_AdditionalProperties": @{
+        @"_AdditionalProperties": arg1 ? @{} : @{
             @"RunningBoard": @{
                 @"Managed": @YES,
                 @"RunningBoardLaunched": @YES,
@@ -52,11 +52,7 @@ xpc_object_t generateDictCF(void) {
     };
     
     // Convert to xpc_object_t
-    return _CFXPCCreateXPCObjectFromCFObject(root);
-}
-
-BOOL launchTest(void) {
-    xpc_object_t xpcDict = generateDictCF();
+    xpc_object_t xpcDict = _CFXPCCreateXPCObjectFromCFObject(root);
     // For some reason _CFXPCCreateXPCObjectFromCFObject doesn't produce correct uint64, so we set them again here
     xpc_dictionary_set_uint64(xpcDict, "handle", 0);
     xpc_dictionary_set_uint64(xpcDict, "type", 7);

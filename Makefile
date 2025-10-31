@@ -15,7 +15,7 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/exception_handler.m \
 	TaskPortHaxxApp/launch.m \
 	TaskPortHaxxApp/mach_excServer.c
-TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics
+TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices
 TaskPortHaxxApp_CFLAGS = -fobjc-arc
 TaskPortHaxxApp_CODESIGN_FLAGS = -S./TaskPortHaxxApp/TaskPortHaxxApp.ent
 

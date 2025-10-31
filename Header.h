@@ -36,10 +36,9 @@ uint64_t __atomic_load_8(uint64_t *ptr, int memorder);
 void __atomic_store_4(uint64_t *ptr, uint32_t val, int memorder);
 void __atomic_store_8(uint64_t *ptr, uint64_t val, int memorder);
 
-kern_return_t
-bootstrap_register(mach_port_t bp, const char *service_name, mach_port_t sp);
-kern_return_t
-bootstrap_look_up(mach_port_t bp, const char *service_name, mach_port_t *sp);
+kern_return_t bootstrap_check_in(mach_port_t bootstrap_port, const char *service_name, mach_port_t *service_port);
+kern_return_t bootstrap_register(mach_port_t bp, const char *service_name, mach_port_t sp);
+kern_return_t bootstrap_look_up(mach_port_t bp, const char *service_name, mach_port_t *sp);
 
 #define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
 int posix_spawnattr_set_persona_np(const posix_spawnattr_t* __restrict, uid_t, uint32_t);
@@ -53,10 +52,16 @@ int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
 
 mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
-pid_t spawn_sleep_process(void);
-mach_port_t psychicpaper_proxy(mach_port_t task);
 
-
+typedef struct {
+    uint64_t __x[29];       /* General purpose registers x0-x28 */
+    uint64_t __fp; /* Frame pointer x29 */
+    uint64_t __lr; /* Link register x30 */
+    uint64_t __sp; /* Stack pointer x31 */
+    uint64_t __pc; /* Program counter */
+    uint32_t __cpsr;        /* Current program status register */
+    uint32_t __flags; /* Flags describing structure format */
+} arm_thread_state64_internal;
 
 typedef xpc_object_t xpc_pipe_t;
 struct _os_alloc_once_s {
@@ -75,7 +80,7 @@ struct xpc_global_data {
   // ...
 };
 
-BOOL launchTest(void);
+BOOL launchTest(NSString *arg1);
 
 kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
 xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);
@@ -88,6 +93,11 @@ void *_os_alloc_once(struct _os_alloc_once_s *slot, size_t sz,
 
 int reboot3(uint64_t flags, ...);
 #define RB2_USERREBOOT (0x2000000000000000llu)
+
+@interface LSApplicationWorkspace : NSObject
++ (instancetype)defaultWorkspace;
+- (BOOL)openApplicationWithBundleID:(NSString *)arg1 ;
+@end
 
 @interface NSProcessInfo(Private)
 - (NSDate *)systemStartTime;

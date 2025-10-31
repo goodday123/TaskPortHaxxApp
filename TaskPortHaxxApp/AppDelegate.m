@@ -6,6 +6,7 @@
 //
 
 #import "AppDelegate.h"
+#import "Header.h"
 
 @interface AppDelegate ()
 
@@ -15,6 +16,11 @@
 
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+//    if (getuid() != 0) {
+//        // Elevate to root by relaunching self
+//        launchTest(nil);
+//        [LSApplicationWorkspace.defaultWorkspace openApplicationWithBundleID:NSBundle.mainBundle.bundleIdentifier];
+//    }
     // Override point for customization after application launch.
     return YES;
 }
