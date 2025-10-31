@@ -50,6 +50,7 @@ int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
          exception_mask_t mask, mach_port_t new_port,
          exception_behavior_t behavior, thread_state_flavor_t flavor);
 
+mach_port_t setup_fake_bootstrap_server(void);
 mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
 
@@ -84,10 +85,12 @@ BOOL launchTest(NSString *arg1);
 
 kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
 xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);
-
 xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
+int xpc_pipe_receive(mach_port_t port, xpc_object_t *msg);
+int xpc_pipe_routine_reply(xpc_object_t reply);
 int _xpc_pipe_interface_routine(xpc_pipe_t pipe, uint64_t routine, xpc_object_t msg,
                                 xpc_object_t XPC_GIVES_REFERENCE *reply, uint64_t flags);
+char *xpc_copy_description(xpc_object_t object);
 void *_os_alloc_once(struct _os_alloc_once_s *slot, size_t sz,
                             os_function_t init);
 

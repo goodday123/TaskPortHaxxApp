@@ -171,7 +171,6 @@ static void exception_server(mach_port_t exceptionPort, BOOL shouldExitOnExcepti
     __Reply__mach_exception_raise_state_identity_t reply;
     BOOL handled = NO;
  
-    printf("exception server starting\n");
     do {
         rt = mach_msg((mach_msg_header_t *)&msg, MACH_RCV_MSG, 0, sizeof(union __RequestUnion__mach_exc_subsystem), exceptionPort, 0, MACH_PORT_NULL);
         assert(rt == MACH_MSG_SUCCESS);
@@ -207,6 +206,7 @@ mach_port_t setup_exception_server(void) {
     blrX19Offset = (uint64_t)func - dyldBase;
     printf("Found blr x19 at offset: 0x%016lx\n", blrX19Offset);
     
+    printf("exception server starting\n");
     mach_port_t server_port;
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
     assert(kr == KERN_SUCCESS);
@@ -214,6 +214,7 @@ mach_port_t setup_exception_server(void) {
     assert(kr == KERN_SUCCESS);
     kr = bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.exception_server", server_port);
     assert(kr == KERN_SUCCESS);
+    printf("exception server registered on port 0x%x\n", server_port);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         exception_server(server_port, NO);
     });

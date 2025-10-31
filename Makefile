@@ -13,6 +13,7 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/ViewController.m \
 	TaskPortHaxxApp/main.m \
 	TaskPortHaxxApp/exception_handler.m \
+	TaskPortHaxxApp/fake_bootstrap_server.m \
 	TaskPortHaxxApp/launch.m \
 	TaskPortHaxxApp/mach_excServer.c
 TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices

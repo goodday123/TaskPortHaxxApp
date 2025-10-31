@@ -13,8 +13,18 @@ int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, 
 
 int child_execve(char *path) {
     mach_port_t exception_port = MACH_PORT_NULL;
+    mach_port_t fake_bootstrap_port = MACH_PORT_NULL;
     bootstrap_look_up(bootstrap_port, "com.kdt.taskporthaxx.exception_server", &exception_port);
     assert(exception_port != MACH_PORT_NULL);
+    bootstrap_look_up(bootstrap_port, "com.kdt.taskporthaxx.fake_bootstrap_port", &fake_bootstrap_port);
+    assert(fake_bootstrap_port != MACH_PORT_NULL);
+    
+    task_set_exception_ports(mach_task_self(),
+        EXC_MASK_ALL | EXC_MASK_CRASH,
+        exception_port,
+        EXCEPTION_STATE_IDENTITY | MACH_EXCEPTION_CODES,
+        ARM_THREAD_STATE64);
+    task_set_bootstrap_port(mach_task_self(), fake_bootstrap_port);
     
     posix_spawnattr_t attr;
     if(posix_spawnattr_init(&attr) != 0) {
@@ -27,7 +37,7 @@ int child_execve(char *path) {
         return 1;
     }
     
-    posix_spawnattr_set_registered_ports_np(&attr, (mach_port_t[]){0, bootstrap_port, exception_port}, 3);
+    posix_spawnattr_set_registered_ports_np(&attr, (mach_port_t[]){0, bootstrap_port, fake_bootstrap_port}, 3);
     posix_spawnattr_setexceptionports_np(&attr,
         EXC_MASK_ALL | EXC_MASK_CRASH,
         exception_port, EXCEPTION_STATE_IDENTITY | MACH_EXCEPTION_CODES, ARM_THREAD_STATE64);
