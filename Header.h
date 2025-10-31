@@ -11,9 +11,12 @@
 uint64_t _tmp_ptr;
 
 #define RemoteArbCall(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
+#define RemoteArbCallBLR(pc, ...) RemoteArbCallBLRInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
+uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
 uint64_t RemoteRead64(uint64_t address);
 uint32_t RemoteRead32(uint64_t address);
+void RemoteWrite32(uint64_t address, uint32_t value);
 void RemoteWrite64(uint64_t address, uint64_t value);
 void RemoteWriteMemory(uint64_t address, const void *data, size_t length);
 void RemoteWriteString(uint64_t address, const char *string);
@@ -22,7 +25,7 @@ void RemoteDetach(void);
 #define PT_DETACH 11
 #define PT_ATTACHEXC 14
 
-uintptr_t brX16Address;
+uintptr_t brX16Address, blrX19Offset, blrX19Address;
 BOOL wantsDetach;
 mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
@@ -71,7 +74,12 @@ struct xpc_global_data {
   // and there's more, but you'll have to wait for MOXiI 2 for those...
   // ...
 };
-xpc_object_t _launch_msg2(xpc_object_t request, int type, uint64_t handle);
+
+BOOL launchTest(void);
+
+kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
+xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);
+
 xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
 int _xpc_pipe_interface_routine(xpc_pipe_t pipe, uint64_t routine, xpc_object_t msg,
                                 xpc_object_t XPC_GIVES_REFERENCE *reply, uint64_t flags);

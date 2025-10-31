@@ -6,6 +6,7 @@
 //
 
 @import Darwin;
+@import MachO;
 @import XPC;
 #import "ViewController.h"
 #include "Header.h"
@@ -23,7 +24,14 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.navigationItem.title = @"Task Port Haxx";
-    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Ptr" style:UIBarButtonItemStylePlain target:self action:@selector(changePtrTapped)];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Options" menu:[UIMenu menuWithTitle:@"Options" children:@[
+        [UIAction actionWithTitle:@"Change Signed Pointer" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            [self changePtrTapped];
+        }],
+        [UIAction actionWithTitle:@"Test spawn root process" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            launchTest();
+        }]
+    ]]];
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
         [[UIBarButtonItem alloc] initWithTitle:@"Arb Call" style:UIBarButtonItemStylePlain target:self action:@selector(arbCallButtonTapped)],

@@ -13,7 +13,7 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/ViewController.m \
 	TaskPortHaxxApp/main.m \
 	TaskPortHaxxApp/exception_handler.m \
-	TaskPortHaxxApp/psychicpaper_proxy.m \
+	TaskPortHaxxApp/launch.m \
 	TaskPortHaxxApp/mach_excServer.c
 TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics
 TaskPortHaxxApp_CFLAGS = -fobjc-arc

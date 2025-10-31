@@ -16,7 +16,7 @@
 #ifdef __arm64e__
 #   define xpaci(x) __asm__ volatile("xpaci %0" : "+r"(x))
 #else
-#   define xpaci(x) (void)(x)
+#   define xpaci(x) (x &= 0xFFFFFFFFF)
 #endif
 
 /*
