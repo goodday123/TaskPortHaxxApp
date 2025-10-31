@@ -24,13 +24,6 @@
  00000001954b2614    str    x16, [x8, #0x10]
  00000001954b2618    ret
  */
-uint64_t setPCFromDebugger(uint64_t addr, uint32_t diversifier) {
-    if (diversifier == 0xa1000000) {
-        printf("Diversifier matched\n");
-        return 0x3a77458206a49848;
-    }
-    return addr;
-}
 
 typedef struct {
     uint64_t __x[29];       /* General purpose registers x0-x28 */
@@ -70,17 +63,19 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     static uint64_t pacFailedCount = 0;
     static uint64_t pacBruteForcedPtr = 0;
     static uint32_t lastDiversifier = 0;
+    static uint64_t lastLR = 0;
     
     if (num_exceptions_handled == 0) {
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
         GlobalChildThreadPort = thread;
-        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
+        //__darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0x41414100);
         signed_pointer = NSUserDefaults.standardUserDefaults.signedPointer;
         signed_diversifier = (uint32_t)NSUserDefaults.standardUserDefaults.signedDiversifier;
         if (signed_pointer != 0) {
             pacBruteForcedPtr = signed_pointer;
         }
+        lastLR = old_state->__lr & 0xFFFFFFFFF;
     }
     
 //     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
@@ -99,7 +94,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if (signed_pointer == 0) {
             // Attempt to brute-force PAC
             // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
-            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 40) & ~0x0080000000000000);
         } else if (signed_pointer == pacBruteForcedPtr) {
             pacBruteForcedPtr = signed_pointer;
             if (signed_diversifier != 0 && lastDiversifier == signed_diversifier) {
@@ -123,13 +118,13 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         //        printf("PAC failure detected?\n");
         //        return KERN_FAILURE;
     } else if (ptrL != ptrR) {
-        printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
+        //printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
     }
     
-    printf("exception handler raise state - exception %d\n", exception);
+    //printf("exception handler raise state - exception %d\n", exception);
     if(pacBruteForcedPtr && num_exceptions_handled > 0) {
-        printf("MAYBE PAC HAS BEEN BRUTE FORCED!\n");
-        printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
+        printf("PAC brute forced!\n");
+        //printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
         signed_diversifier = 0; // make it so we never reach the reset condition anymore
         brX16Address = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
@@ -138,8 +133,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     if (num_exceptions_handled > 0) {
         dispatch_semaphore_signal(sem_output_ready);
-        if (((old_state->__lr & 0xFFFFFF00) != 0x41414100 &&
-             (old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00) || wantsDetach) {
+        if ((old_state->__lr&0xFFFFFFFFF) != lastLR || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             printf("Registers:\n"
@@ -245,8 +239,10 @@ kern_return_t catch_mach_exception_raise (mach_port_t exception_port,
 }
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
-uint64_t RemoteArbCallInternal(uint64_t pc, uint64_t args[], int argCount) {
+uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
     assert(argCount <= 8);
+    
+    printf("Calling function %s\n", name);
     
     xpaci(pc);
     new_state->__x[16] = pc;
@@ -258,10 +254,16 @@ uint64_t RemoteArbCallInternal(uint64_t pc, uint64_t args[], int argCount) {
     return new_state->__x[0];
 }
 
+uint32_t RemoteRead32(uint64_t address) {
+    return RemoteArbCall(__atomic_load_4, address, 3);
+}
 uint64_t RemoteRead64(uint64_t address) {
     return RemoteArbCall(__atomic_load_8, address, 3);
 }
 
+void RemoteWrite32(uint64_t address, uint32_t value) {
+    RemoteArbCall(__atomic_store_4, address, value, 0);
+}
 void RemoteWrite64(uint64_t address, uint64_t value) {
     RemoteArbCall(__atomic_store_8, address, value, 0);
 }

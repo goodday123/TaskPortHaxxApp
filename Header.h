@@ -10,9 +10,10 @@
 
 uint64_t _tmp_ptr;
 
-#define RemoteArbCall(pc, ...) RemoteArbCallInternal((uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
-uint64_t RemoteArbCallInternal(uint64_t pc, uint64_t args[], int argCount);
+#define RemoteArbCall(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
+uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
 uint64_t RemoteRead64(uint64_t address);
+uint32_t RemoteRead32(uint64_t address);
 void RemoteWrite64(uint64_t address, uint64_t value);
 void RemoteWriteMemory(uint64_t address, const void *data, size_t length);
 void RemoteWriteString(uint64_t address, const char *string);
@@ -27,7 +28,9 @@ mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
 extern char **environ;
 
+uint32_t __atomic_load_4(uint64_t *ptr, int memorder);
 uint64_t __atomic_load_8(uint64_t *ptr, int memorder);
+void __atomic_store_4(uint64_t *ptr, uint32_t val, int memorder);
 void __atomic_store_8(uint64_t *ptr, uint64_t val, int memorder);
 
 kern_return_t
@@ -49,6 +52,34 @@ mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
 pid_t spawn_sleep_process(void);
 mach_port_t psychicpaper_proxy(mach_port_t task);
+
+
+
+typedef xpc_object_t xpc_pipe_t;
+struct _os_alloc_once_s {
+  long once;
+  void *ptr;
+};
+struct xpc_global_data {
+  uint64_t a;
+  uint64_t xpc_flags;
+  mach_port_t task_bootstrap_port; /* 0x10 */
+#ifndef _64
+  uint32_t padding;
+#endif
+  xpc_pipe_t xpc_bootstrap_pipe; /* 0x18 */
+  // and there's more, but you'll have to wait for MOXiI 2 for those...
+  // ...
+};
+xpc_object_t _launch_msg2(xpc_object_t request, int type, uint64_t handle);
+xpc_object_t xpc_pipe_create_from_port(mach_port_t port, uint32_t flags);
+int _xpc_pipe_interface_routine(xpc_pipe_t pipe, uint64_t routine, xpc_object_t msg,
+                                xpc_object_t XPC_GIVES_REFERENCE *reply, uint64_t flags);
+void *_os_alloc_once(struct _os_alloc_once_s *slot, size_t sz,
+                            os_function_t init);
+
+int reboot3(uint64_t flags, ...);
+#define RB2_USERREBOOT (0x2000000000000000llu)
 
 @interface NSProcessInfo(Private)
 - (NSDate *)systemStartTime;
