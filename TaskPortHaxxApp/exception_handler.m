@@ -242,9 +242,15 @@ uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int 
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
-    assert(argCount <= 8);
-    
     printf("Calling function %s\n", name);
+    
+    if (argCount > 8) {
+        uint64_t sp = new_state->__sp; xpaci(sp);
+        for (int i = 8; i < argCount; i++) {
+            RemoteWrite64(sp + sizeof(uint64_t[i-8]), args[i]);
+        }
+        argCount = 8;
+    }
     
     xpaci(pc);
     new_state->__x[16] = pc;
