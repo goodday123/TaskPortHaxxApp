@@ -70,7 +70,18 @@ int main(int argc, char * argv[]) {
         if (strcmp(argv[1], "child") == 0) {
             return child_execve("/usr/libexec/xpcproxy");
         } else if (strcmp(argv[1], "dtsecurity") == 0) {
-            return child_execve("/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc/com.apple.dt.instruments.dtsecurity");
+            NSString *execDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec";
+            [NSFileManager.defaultManager createDirectoryAtPath:execDir withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *outDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec/TaskPortHaxx.xpc";
+            if (![[NSFileManager defaultManager] fileExistsAtPath:outDir]) {
+                NSError *error = nil;
+                [NSFileManager.defaultManager copyItemAtPath:@"/System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/XPCServices/com.apple.dt.instruments.dtsecurity.xpc" toPath:outDir error:&error];
+                if (error) {
+                    NSLog(@"Failed to copy dtsecurity.xpc: %@", error);
+                    return 1;
+                }
+            }
+            return child_execve("/var/db/com.apple.xpc.roleaccountd.staging/exec/TaskPortHaxx.xpc/com.apple.dt.instruments.dtsecurity");
 //        } else if (strcmp(argv[1], "signal") == 0) {
 //            assert(argc >= 3);
 //            pid_t target_pid = (pid_t)atoi(argv[2]);
