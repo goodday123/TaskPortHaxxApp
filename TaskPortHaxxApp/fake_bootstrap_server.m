@@ -25,7 +25,11 @@ boolean_t dispatch_mig_callback(mach_msg_header_t *request, mach_msg_header_t *r
         NSLog(@"Got request: %@", reqObj);
         
         xpc_object_t reply = xpc_dictionary_create_reply(reqObj);
-        xpc_dictionary_set_int64(reply, "error", 0x9c);
+        // __XPC_IS_CRASHING_AFTER_AN_ATTEMPT_TO_CREATE_A_PROHIBITED_DOMAIN__ is not available on iOS 17.0
+        //xpc_dictionary_set_int64(reply, "error", 0x9c);
+        // instead, we trip other cold errors
+        xpc_dictionary_set_int64(reply, "req_pid", -1);
+        xpc_dictionary_set_int64(reply, "rec_execcnt", -1);
         xpc_pipe_routine_reply(reply);
         
         return true;

@@ -117,7 +117,7 @@ vm_offset_t findSbinLaunchdOff(void) {
         NSUInteger signedPointer = strtoull(textField.text.UTF8String, NULL, 16);
         uint32_t diversifier = (uint32_t)strtoul(alert.textFields[1].text.UTF8String, NULL, 16);
         NSUserDefaults.standardUserDefaults.signedPointer = signedPointer;
-        NSUserDefaults.standardUserDefaults.signedDiversifier = diversifier;
+        NSUserDefaults.standardUserDefaults.signedDiversifier = signedPointer ? diversifier : 0;
         printf("Set signed pointer to 0x%lx\n", signedPointer);
     }];
     UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil];
@@ -152,6 +152,10 @@ vm_offset_t findSbinLaunchdOff(void) {
         // Create a region which holds temp data (should we use stack instead?)
         vm_size_t shared_size = getpagesize();
         vm_address_t map = RemoteArbCall(mmap, 0, shared_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        if (!map) {
+            printf("Failed to call mmap. Please try resetting pointer and try again\n");
+            return;
+        }
         printf("Mapped memory at 0x%lx\n", map);
         
         // Test mkdir
