@@ -47,6 +47,9 @@ vm_offset_t findSbinLaunchdOff(void) {
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"Options" menu:[UIMenu menuWithTitle:@"Options" children:@[
         [UIAction actionWithTitle:@"Change Signed Pointer" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
             [self changePtrTapped];
+        }],
+        [UIAction actionWithTitle:@"Userspace reboot" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            [self userspaceRebootTapped];
         }]
     ]]];
     self.navigationItem.rightBarButtonItems = @[
@@ -119,6 +122,17 @@ vm_offset_t findSbinLaunchdOff(void) {
     }];
     UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil];
     [alert addAction:okAction];
+    [alert addAction:cancelAction];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)userspaceRebootTapped {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Userspace Reboot" message:@"This will renew the PAC signature." preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertAction *rebootAction = [UIAlertAction actionWithTitle:@"Reboot" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        userspaceReboot();
+    }];
+    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:nil];
+    [alert addAction:rebootAction];
     [alert addAction:cancelAction];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -218,6 +232,7 @@ vm_offset_t findSbinLaunchdOff(void) {
         // Reprotect rw
         vm_offset_t launchd_str_off = findSbinLaunchdOff();
         
+        printf("reprotecting 0x%lx\n", launchd_base + launchd_str_off);
         kr = (kern_return_t)RemoteArbCallBLR(vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
         if (kr != KERN_SUCCESS) {
             printf("vm_protect failed\n");

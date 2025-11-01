@@ -35,10 +35,21 @@
 			membershipExceptions = (
 				Info.plist,
 				TaskPortHaxxApp.ent,
+				troller.m,
 			);
 			target = E15251872EAB4A6800F6E003 /* TaskPortHaxxApp */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		E197E7832EB5BA08002465F1 /* Exceptions for "TaskPortHaxxApp" folder in "Copy Bundle Resources" phase from "TaskPortHaxxApp" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = E15251862EAB4A6800F6E003 /* Resources */;
+			membershipExceptions = (
+				troller.m,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E11686A02EAC43D700354987 /* Resources */ = {
@@ -50,6 +61,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				E152519F2EAB4A6900F6E003 /* Exceptions for "TaskPortHaxxApp" folder in "TaskPortHaxxApp" target */,
+				E197E7832EB5BA08002465F1 /* Exceptions for "TaskPortHaxxApp" folder in "Copy Bundle Resources" phase from "TaskPortHaxxApp" target */,
 			);
 			path = TaskPortHaxxApp;
 			sourceTree = "<group>";

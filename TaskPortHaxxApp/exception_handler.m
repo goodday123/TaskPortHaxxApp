@@ -47,6 +47,24 @@ struct dyld_all_image_infos *_alt_dyld_get_all_image_infos(void) {
     return result;
 }
 
+void DumpRegisters(const arm_thread_state64_internal *old_state) {
+    printf("Registers:\n"
+           " x0: 0x%016llx  x1: 0x%016llx  x2: 0x%016llx  x3: 0x%016llx\n"
+           " x4: 0x%016llx  x5: 0x%016llx  x6: 0x%016llx  x7: 0x%016llx\n"
+           " x8: 0x%016llx  x9: 0x%016llx x10: 0x%016llx x11: 0x%016llx\n"
+           "x12: 0x%016llx x13: 0x%016llx x14: 0x%016llx x15: 0x%016llx\n"
+           "x16: 0x%016llx x17: 0x%016llx x18: 0x%016llx x19: 0x%016llx\n"
+           "x20: 0x%016llx x21: 0x%016llx x22: 0x%016llx x23: 0x%016llx\n"
+           "x24: 0x%016llx x25: 0x%016llx x26: 0x%016llx x27: 0x%016llx\n"
+           "x28: 0x%016llx  fp: 0x%016llx  lr: 0x%016llx\n"
+           " pc: 0x%016llx  sp: 0x%016llx psr: 0x%08x"
+           "\n",
+           old_state->__x[ 0], old_state->__x[ 1], old_state->__x[ 2], old_state->__x[ 3], old_state->__x[ 4], old_state->__x[ 5], old_state->__x[ 6], old_state->__x[ 7], old_state->__x[ 8], old_state->__x[ 9],
+           old_state->__x[10], old_state->__x[11], old_state->__x[12], old_state->__x[13], old_state->__x[14], old_state->__x[15], old_state->__x[16], old_state->__x[17], old_state->__x[18], old_state->__x[19],
+           old_state->__x[20], old_state->__x[21], old_state->__x[22], old_state->__x[23], old_state->__x[24], old_state->__x[25], old_state->__x[26], old_state->__x[27], old_state->__x[28],
+           old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
+}
+
 dispatch_semaphore_t sem_input_ready;
 dispatch_semaphore_t sem_output_ready;
 int num_exceptions_handled = 0;
@@ -104,7 +122,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if (signed_pointer == 0) {
             // Attempt to brute-force PAC
             // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
-            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 40) & ~0x0080000000000000);
+            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
         } else if (signed_pointer == pacBruteForcedPtr) {
             pacBruteForcedPtr = signed_pointer;
         }
@@ -142,21 +160,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if ((old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00 || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
-            printf("Registers:\n"
-                   " x0: 0x%016llx  x1: 0x%016llx  x2: 0x%016llx  x3: 0x%016llx\n"
-                   " x4: 0x%016llx  x5: 0x%016llx  x6: 0x%016llx  x7: 0x%016llx\n"
-                   " x8: 0x%016llx  x9: 0x%016llx x10: 0x%016llx x11: 0x%016llx\n"
-                   "x12: 0x%016llx x13: 0x%016llx x14: 0x%016llx x15: 0x%016llx\n"
-                   "x16: 0x%016llx x17: 0x%016llx x18: 0x%016llx x19: 0x%016llx\n"
-                   "x20: 0x%016llx x21: 0x%016llx x22: 0x%016llx x23: 0x%016llx\n"
-                   "x24: 0x%016llx x25: 0x%016llx x26: 0x%016llx x27: 0x%016llx\n"
-                   "x28: 0x%016llx  fp: 0x%016llx  lr: 0x%016llx\n"
-                   " pc: 0x%016llx  sp: 0x%016llx psr: 0x%08x"
-                   "\n",
-                   old_state->__x[ 0], old_state->__x[ 1], old_state->__x[ 2], old_state->__x[ 3], old_state->__x[ 4], old_state->__x[ 5], old_state->__x[ 6], old_state->__x[ 7], old_state->__x[ 8], old_state->__x[ 9],
-                   old_state->__x[10], old_state->__x[11], old_state->__x[12], old_state->__x[13], old_state->__x[14], old_state->__x[15], old_state->__x[16], old_state->__x[17], old_state->__x[18], old_state->__x[19],
-                   old_state->__x[20], old_state->__x[21], old_state->__x[22], old_state->__x[23], old_state->__x[24], old_state->__x[25], old_state->__x[26], old_state->__x[27], old_state->__x[28],
-                   old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
+            DumpRegisters(old_state);
             return KERN_FAILURE;
         }
     }

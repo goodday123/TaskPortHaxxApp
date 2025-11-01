@@ -94,8 +94,7 @@ char *xpc_copy_description(xpc_object_t object);
 void *_os_alloc_once(struct _os_alloc_once_s *slot, size_t sz,
                             os_function_t init);
 
-int reboot3(uint64_t flags, ...);
-#define RB2_USERREBOOT (0x2000000000000000llu)
+int userspaceReboot(void);
 
 @interface LSApplicationWorkspace : NSObject
 + (instancetype)defaultWorkspace;
