@@ -124,9 +124,14 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     //printf("exception handler raise state - exception %d\n", exception);
     if(pacBruteForcedPtr && num_exceptions_handled > 0) {
-        printf("PAC brute forced!\n");
-        printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
-        printf("- div: 0x%08x\n", lastDiversifier);
+        // Only print a couple of times
+        static int count = 0;
+        if (count < 2) {
+            count++;
+            printf("PAC brute forced!\n");
+            printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
+            printf("- div: 0x%08x\n", lastDiversifier);
+        }
         brX16Address = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedDiversifier = lastDiversifier;
@@ -237,13 +242,12 @@ uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int 
     //printf("Writing to stack at 0x%016llx\n", sp+0xa8);
     RemoteWrite64(sp + 0xa8, 0xFFFFFF00);
     new_state->__x[19] = pc;
+    assert(blrX19Address);
     return RemoteArbCallInternal(name, blrX19Address, args, argCount);
 }
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
-    printf("Calling function %s\n", name);
-    
     if (argCount > 8) {
         uint64_t sp = new_state->__sp; xpaci(sp);
         for (int i = 8; i < argCount; i++) {
@@ -255,10 +259,12 @@ uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int arg
     xpaci(pc);
     new_state->__x[16] = pc;
     memcpy(&new_state->__x[0], args, argCount * sizeof(uint64_t));
+    
+    printf("Calling function %s\n", name);
     dispatch_semaphore_signal(sem_input_ready);
     dispatch_semaphore_wait(sem_output_ready, DISPATCH_TIME_FOREVER);
     
-    printf("function returned x0=0x%llx\n", new_state->__x[0]);
+    printf("- function returned x0=0x%llx\n", new_state->__x[0]);
     return new_state->__x[0];
 }
 

