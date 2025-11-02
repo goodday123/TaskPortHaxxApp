@@ -14,18 +14,6 @@
 #include "mach_exc.h"
 #include "mach_excServer.h"
 
-#ifdef __arm64e__
-#   define xpaci(x) __asm__ volatile("xpaci %0" : "+r"(x))
-#else
-#   define xpaci(x) (x &= 0xFFFFFFFFF)
-#endif
-
-/*
- 00000001954b2610    pacia    x16, x17
- 00000001954b2614    str    x16, [x8, #0x10]
- 00000001954b2618    ret
- */
-
 struct dyld_all_image_infos *_alt_dyld_get_all_image_infos(void) {
     static struct dyld_all_image_infos *result;
     if (result) {
@@ -129,7 +117,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         
         new_state->__pc = pacBruteForcedPtr;
         pacFailedCount++;
-        if ((pacFailedCount % 99999) == 0) {
+        if ((pacFailedCount & 0xffff) == 0) {
             printf("Still brute forcing PAC... total: %llu\n", pacFailedCount);
             printf("0x%016llx\n", pacBruteForcedPtr);
         }
@@ -249,30 +237,6 @@ mach_port_t setup_exception_server(void) {
         exception_server(server_port, NO);
     });
     return server_port;
-}
-
-uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
-    /*
-     dyld`___ZZNK5dyld46Loader25findAndRunAllInitializersERNS_12RuntimeStateEENK3$_0clEv_block_invoke
-     0x1006681c8 <+164>: blr    x19
-     0x1006681cc <+168>: add    x0, sp, #0x10
-     0x1006681d0 <+172>: bl     0x10064166c               ; dyld3::ScopedTimer::endTimer()
-     0x1006681d4 <+176>: ldp    x29, x30, [sp, #0xa0]
-     0x1006681d8 <+180>: ldp    x20, x19, [sp, #0x90]
-     0x1006681dc <+184>: ldp    x22, x21, [sp, #0x80]
-     0x1006681e0 <+188>: add    sp, sp, #0xb0
-     0x1006681e4 <+192>: retab
-     */
-    uint64_t sp = new_state->__sp; xpaci(sp);
-    //printf("Writing to stack at 0x%016llx\n", sp+0xa8);
-    RemoteWrite64(sp + 0xa8, 0xFFFFFF00);
-    new_state->__x[19] = pc;
-    
-    printf("TODO: IMPLEMENT THIS BACK!! spinning....\n");
-    sleep(1000);
-    //assert(blrX19Address);
-    //return RemoteArbCallInternal(name, blrX19Address, args, argCount);
-    assert(0);
 }
 
 os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;

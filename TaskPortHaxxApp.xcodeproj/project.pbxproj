@@ -23,7 +23,6 @@
 		E116868C2EAC403100354987 /* Makefile */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
 		E118B6562EAB4BB1008050F8 /* jbdev.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = jbdev.plist; sourceTree = "<group>"; };
 		E118B6572EAB4BB1008050F8 /* jbdev.build.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = jbdev.build.sh; sourceTree = "<group>"; };
-		E12393D02EABC72F00E9BD9F /* Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Header.h; sourceTree = "<group>"; };
 		E123952C2EAC3EB700E9BD9F /* opainject */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = opainject; sourceTree = BUILT_PRODUCTS_DIR; };
 		E15251882EAB4A6800F6E003 /* TaskPortHaxxApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TaskPortHaxxApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E152520A2EAB4B3300F6E003 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
@@ -92,7 +91,6 @@
 				E11686A02EAC43D700354987 /* Resources */,
 				E116868B2EAC403100354987 /* control */,
 				E116868C2EAC403100354987 /* Makefile */,
-				E12393D02EABC72F00E9BD9F /* Header.h */,
 				E118B6562EAB4BB1008050F8 /* jbdev.plist */,
 				E118B6572EAB4BB1008050F8 /* jbdev.build.sh */,
 				E152518A2EAB4A6800F6E003 /* TaskPortHaxxApp */,

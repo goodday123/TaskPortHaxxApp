@@ -9,8 +9,6 @@
 #import "AppDelegate.h"
 #import "Header.h"
 
-int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, mach_port_t portarray[], uint32_t count);
-
 int child_execve(char *path) {
     mach_port_t exception_port = MACH_PORT_NULL;
     mach_port_t fake_bootstrap_port = MACH_PORT_NULL;

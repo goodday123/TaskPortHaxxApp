@@ -8,12 +8,24 @@
 @import Darwin;
 #include <crt_externs.h>
 
-uint64_t _tmp_ptr;
+#ifdef __arm64e__
+#   define xpaci(x) __asm__ volatile("xpaci %0" : "+r"(x))
+#else
+#   define xpaci(x) (x &= 0xFFFFFFFFF)
+#endif
+
+#define msgh_request_port    msgh_local_port
+#define MACH_MSGH_BITS_REQUEST(bits)    MACH_MSGH_BITS_LOCAL(bits)
+#define msgh_reply_port        msgh_remote_port
+#define MACH_MSGH_BITS_REPLY(bits)    MACH_MSGH_BITS_REMOTE(bits)
+#define MIG_RETURN_ERROR(X, code)    {\
+                ((mig_reply_error_t *)X)->RetCode = code;\
+                ((mig_reply_error_t *)X)->NDR = NDR_record;\
+                return;\
+                }
 
 #define RemoteArbCall(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
-#define RemoteArbCallBLR(pc, ...) RemoteArbCallBLRInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
-uint64_t RemoteArbCallBLRInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
 void RemoteChangeLR(uint64_t newLR);
 uint64_t RemoteSignPACIA(uint64_t address, uint64_t modifier);
 uint64_t RemoteRead64(uint64_t address);
@@ -55,6 +67,7 @@ int posix_spawnattr_set_ptrauth_task_port_np(posix_spawnattr_t * __restrict attr
 int posix_spawnattr_setexceptionports_np(posix_spawnattr_t *attr,
          exception_mask_t mask, mach_port_t new_port,
          exception_behavior_t behavior, thread_state_flavor_t flavor);
+int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, mach_port_t portarray[], uint32_t count);
 
 mach_port_t setup_fake_bootstrap_server(void);
 mach_port_t setup_exception_server(void);

@@ -255,6 +255,7 @@ vm_offset_t findSbinLaunchdOff(void) {
         }
         
         printf("Successfully overwrote launchd executable path string to %s\n", newPath);
+        RemoteArbCall(exit, 0);
         
         // stuff
 //        uint64_t remote_list = map + sizeof(uint64_t);
