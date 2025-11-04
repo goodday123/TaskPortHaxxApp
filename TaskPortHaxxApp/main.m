@@ -94,6 +94,11 @@ int main(int argc, char * argv[]) {
         }
     }
     
+//    if (getuid() != 0) {
+//        launchTest(nil);
+//        return 0;
+//    }
+    
     NSString * appDelegateClassName;
     @autoreleasepool {
         // Setup code that might create autoreleased objects goes here.

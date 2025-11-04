@@ -133,4 +133,6 @@ uint32_t signed_diversifier;
 @interface NSUserDefaults(Private)
 @property(nonatomic) NSUInteger signedPointer;
 @property(nonatomic) uint32_t signedDiversifier;
+@property(nonatomic) NSUInteger offsetLaunchdPath;
+@property(nonatomic) NSUInteger offsetAMFI;
 @end

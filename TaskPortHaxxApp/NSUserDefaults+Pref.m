@@ -21,4 +21,16 @@
 - (uint32_t)signedDiversifier {
     return [[self objectForKey:@"signedDiversifier"] unsignedIntValue];
 }
+- (void)setOffsetLaunchdPath:(NSUInteger)off {
+    [self setObject:@(off) forKey:@"offsetLaunchdPath"];
+}
+- (NSUInteger)offsetLaunchdPath {
+    return [[self objectForKey:@"offsetLaunchdPath"] unsignedIntegerValue];
+}
+- (void)setOffsetAMFI:(NSUInteger)off {
+    [self setObject:@(off) forKey:@"offsetAMFI"];
+}
+- (NSUInteger)offsetAMFI {
+    return [[self objectForKey:@"offsetAMFI"] unsignedIntegerValue];
+}
 @end

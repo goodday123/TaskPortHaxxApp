@@ -315,6 +315,7 @@ void RemoteWriteString(uint64_t address, const char *string) {
 void RemoteDetach(void) {
     // kill(SIGSTOP)
     // task_set_exception_ports
+    wantsDetach = YES;
     mach_port_t task = (mach_port_t)RemoteArbCall(task_self_trap);
     RemoteArbCall(task_set_exception_ports, task, 2, 0, 1, 0);
 }

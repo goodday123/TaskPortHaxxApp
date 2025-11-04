@@ -20,7 +20,7 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/troller.m \
 	TaskPortHaxxApp/mach_excServer.c \
 	TaskPortHaxxApp/NSUserDefaults+Pref.m
-TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices
+TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices IOKit
 TaskPortHaxxApp_CFLAGS = -fobjc-arc
 TaskPortHaxxApp_CODESIGN_FLAGS = -S./TaskPortHaxxApp/TaskPortHaxxApp.ent
 

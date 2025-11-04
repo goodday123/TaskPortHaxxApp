@@ -8,11 +8,14 @@
 @import Darwin;
 @import MachO;
 @import XPC;
+#import <IOKit/IOKitLib.h>
 #import "ViewController.h"
 #include "Header.h"
 #include <sys/wait.h>
 
-vm_offset_t findSbinLaunchdOff(void) {
+NSDictionary *getLaunchdStringOffsets(void) {
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    
     char *path = "/sbin/launchd";
     int fd = open(path, O_RDONLY);
     struct stat s;
@@ -23,13 +26,16 @@ vm_offset_t findSbinLaunchdOff(void) {
     size_t size = 0;
     char *cstring = (char *)getsectiondata(map, SEG_TEXT, "__cstring", &size);
     assert(cstring);
-    while (strcmp(cstring, "/sbin/launchd") != 0) {
-        cstring += strlen(cstring) + 1;
+    while (size > 0) {
+        dict[@(cstring)] = @(cstring - (char *)map);
+        uint64_t off = strlen(cstring) + 1;
+        cstring += off;
+        size -= off;
     }
     
     munmap((void *)map, s.st_size);
     close(fd);
-    return cstring - (char *)map;
+    return dict;
 }
 
 @interface ViewController ()
@@ -41,6 +47,31 @@ vm_offset_t findSbinLaunchdOff(void) {
 
 @implementation ViewController
 
+- (void)loadTrustCacheTapped {
+    char *path = "/var/mobile/.TrustCache";
+    int fd = open(path, O_RDONLY);
+    struct stat s;
+    fstat(fd, &s);
+    void *map = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    assert(map != MAP_FAILED);
+    
+    CFDictionaryRef match = IOServiceMatching("AppleMobileFileIntegrity");
+    io_service_t svc = IOServiceGetMatchingService(0, match);
+    io_connect_t conn;
+    IOServiceOpen(svc, mach_task_self_, 0, &conn);
+    kern_return_t kr = IOConnectCallMethod(conn, 2, NULL, 0, map, s.st_size, NULL, NULL, NULL, NULL);
+    if (kr != KERN_SUCCESS) {
+        printf("IOConnectCallMethod failed: %s\n", mach_error_string(kr));
+    } else {
+        printf("Successfully loaded trust cache from %s\n", path);
+    }
+    IOServiceClose(conn);
+    IOObjectRelease(svc);
+    
+    munmap((void *)map, s.st_size);
+    close(fd);
+}
+
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.navigationItem.title = @"Task Port Haxx";
@@ -50,7 +81,10 @@ vm_offset_t findSbinLaunchdOff(void) {
         }],
         [UIAction actionWithTitle:@"Userspace reboot" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
             [self userspaceRebootTapped];
-        }]
+        }],
+//        [UIAction actionWithTitle:@"Load Trust Cache" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+//            [self loadTrustCacheTapped];
+//        }]
     ]]];
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
@@ -66,6 +100,19 @@ vm_offset_t findSbinLaunchdOff(void) {
     [self.view addSubview:textView];
     self.logTextView = textView;
     [self redirectStdio];
+    
+    // find launchd string offsets
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    if (!defaults.offsetLaunchdPath) {
+        NSDictionary *offsets = getLaunchdStringOffsets();
+        defaults.offsetLaunchdPath = [offsets[@"/sbin/launchd"] unsignedLongValue];
+        // AMFI is only needed for iOS 17.0 to bypass launch constraint
+        defaults.offsetAMFI = [offsets[@"AMFI"] unsignedLongValue];
+        printf("Found launchd path string offset: 0x%lx\n", defaults.offsetLaunchdPath);
+        if (defaults.offsetAMFI) {
+            printf("Found AMFI string offset: 0x%lx\n", defaults.offsetAMFI);
+        }
+    }
     
     self.exceptionPort = setup_exception_server();
     self.fakeBootstrapPort = setup_fake_bootstrap_server();
@@ -261,9 +308,8 @@ vm_offset_t findSbinLaunchdOff(void) {
         
         // Reprotect rw
         // minimum page = 0x5f000;
-        vm_offset_t launchd_str_off = findSbinLaunchdOff(); //69DCB;
-        vm_offset_t amfi_str_off = 0x6B43E;
-        vm_offset_t sandbox_str_off = 0x5F908;
+        vm_offset_t launchd_str_off = NSUserDefaults.standardUserDefaults.offsetLaunchdPath;
+        vm_offset_t amfi_str_off = NSUserDefaults.standardUserDefaults.offsetAMFI;
         
         printf("reprotecting 0x%lx\n", launchd_base + 0x5f000);
         RemoteChangeLR(0xFFFFFF00); // fix autibsp
@@ -276,7 +322,7 @@ vm_offset_t findSbinLaunchdOff(void) {
 
         // https://github.com/wh1te4ever/TaskPortHaxxApp/commit/327022fe73089f366dcf1d0d75012e6288916b29
         // Bypass panic by launch constraints
-        // Method 2: Patch `AMFI`, `Sandbox` string that being used as _amfi_launch_constraint_set_spawnattr's arguments
+        // Method 2: Patch `AMFI` string that being used as _amfi_launch_constraint_set_spawnattr's arguments
 
         // Patch string `AMFI`
         
@@ -290,20 +336,6 @@ vm_offset_t findSbinLaunchdOff(void) {
             return;
         }
         RemoteTaskHexDump(launchd_base + amfi_str_off, 0x100, launchd_task, (uint64_t)map);
-
-        // Patch string `Sandbox`
-        vm_offset_t sandbox_str_off = 0x5F908;
-        
-        const char *newStr2 = "BBBBBBB\x00";
-        RemoteWriteString(map, newStr2);
-        RemoteChangeLR(0xFFFFFF00); // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + sandbox_str_off, map, 8);
-        if (kr != KERN_SUCCESS) {
-            printf("vm_write failed\n");
-            sleep(5);
-            return;
-        }
-        RemoteTaskHexDump(launchd_base + sandbox_str_off, 0x100, launchd_task, (uint64_t)map);
 
         // Overwrite /sbin/launchd string to /var/.launchd
         const char *newPath = "/var/.launchd";
