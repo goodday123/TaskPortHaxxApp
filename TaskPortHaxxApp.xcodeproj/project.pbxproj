@@ -41,6 +41,13 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		E107BD882EBE38610051E414 /* Exceptions for "TaskPortHaxxApp" folder in "Compile Sources" phase from "TaskPortHaxxApp" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = E15251842EAB4A6800F6E003 /* Sources */;
+			membershipExceptions = (
+				ProcessContext.h,
+			);
+		};
 		E197E7832EB5BA08002465F1 /* Exceptions for "TaskPortHaxxApp" folder in "Copy Bundle Resources" phase from "TaskPortHaxxApp" target */ = {
 			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
 			buildPhase = E15251862EAB4A6800F6E003 /* Resources */;
@@ -60,6 +67,7 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				E152519F2EAB4A6900F6E003 /* Exceptions for "TaskPortHaxxApp" folder in "TaskPortHaxxApp" target */,
+				E107BD882EBE38610051E414 /* Exceptions for "TaskPortHaxxApp" folder in "Compile Sources" phase from "TaskPortHaxxApp" target */,
 				E197E7832EB5BA08002465F1 /* Exceptions for "TaskPortHaxxApp" folder in "Copy Bundle Resources" phase from "TaskPortHaxxApp" target */,
 			);
 			path = TaskPortHaxxApp;
@@ -167,6 +175,7 @@
 					};
 					E15251872EAB4A6800F6E003 = {
 						CreatedOnToolsVersion = 26.0;
+						LastSwiftMigration = 2600;
 					};
 				};
 			};
@@ -265,6 +274,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -286,6 +296,8 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -295,6 +307,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Manual;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -316,6 +329,7 @@
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;

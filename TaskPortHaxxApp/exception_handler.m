@@ -35,29 +35,13 @@ struct dyld_all_image_infos *_alt_dyld_get_all_image_infos(void) {
     return result;
 }
 
-void DumpRegisters(const arm_thread_state64_internal *old_state) {
-    printf("Registers:\n"
-           " x0: 0x%016llx  x1: 0x%016llx  x2: 0x%016llx  x3: 0x%016llx\n"
-           " x4: 0x%016llx  x5: 0x%016llx  x6: 0x%016llx  x7: 0x%016llx\n"
-           " x8: 0x%016llx  x9: 0x%016llx x10: 0x%016llx x11: 0x%016llx\n"
-           "x12: 0x%016llx x13: 0x%016llx x14: 0x%016llx x15: 0x%016llx\n"
-           "x16: 0x%016llx x17: 0x%016llx x18: 0x%016llx x19: 0x%016llx\n"
-           "x20: 0x%016llx x21: 0x%016llx x22: 0x%016llx x23: 0x%016llx\n"
-           "x24: 0x%016llx x25: 0x%016llx x26: 0x%016llx x27: 0x%016llx\n"
-           "x28: 0x%016llx  fp: 0x%016llx  lr: 0x%016llx\n"
-           " pc: 0x%016llx  sp: 0x%016llx psr: 0x%08x"
-           "\n",
-           old_state->__x[ 0], old_state->__x[ 1], old_state->__x[ 2], old_state->__x[ 3], old_state->__x[ 4], old_state->__x[ 5], old_state->__x[ 6], old_state->__x[ 7], old_state->__x[ 8], old_state->__x[ 9],
-           old_state->__x[10], old_state->__x[11], old_state->__x[12], old_state->__x[13], old_state->__x[14], old_state->__x[15], old_state->__x[16], old_state->__x[17], old_state->__x[18], old_state->__x[19],
-           old_state->__x[20], old_state->__x[21], old_state->__x[22], old_state->__x[23], old_state->__x[24], old_state->__x[25], old_state->__x[26], old_state->__x[27], old_state->__x[28],
-           old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
-}
+void DumpRegisters(const arm_thread_state64_internal *old_state);
 
 dispatch_semaphore_t sem_input_ready;
 dispatch_semaphore_t sem_output_ready;
 int num_exceptions_handled = 0;
 arm_thread_state64_internal *new_state;
-kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_port,
+kern_return_t dtsecurity_catch_mach_exception_raise_state_identity (mach_port_t exception_port,
                                                          mach_port_t thread,
                                                          mach_port_t task,
                                                          exception_type_t exception,
@@ -69,10 +53,6 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
                                                          thread_state_t new_state_,
                                                          mach_msg_type_number_t *new_state_cnt)
 {
-    if (*flavor != ARM_THREAD_STATE64) {
-        return KERN_FAILURE;
-    }
-    
     const arm_thread_state64_internal *old_state = (const arm_thread_state64_internal *)old_state_;
     new_state = (arm_thread_state64_internal *)new_state_;
     memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
@@ -84,9 +64,11 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     if (num_exceptions_handled == 0) {
         DumpRegisters(old_state);
-        printf("got task port: %d\n", task);
-        GlobalChildTaskPort = task;
-        GlobalChildThreadPort = thread;
+        printf("got dtsecurity task port: %d\n", task);
+        
+        kern_return_t kr = bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.dtsecurity_task_port", task);
+        printf("bootstrap_register returned: 0x%x\n", kr);
+        
         signed_pointer = NSUserDefaults.standardUserDefaults.signedPointer;
         signed_diversifier = (uint32_t)NSUserDefaults.standardUserDefaults.signedDiversifier;
         if (signed_pointer != 0) {
@@ -159,6 +141,81 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     
     num_exceptions_handled++;
     return KERN_SUCCESS;
+}
+
+kern_return_t updatebrain_catch_mach_exception_raise_state_identity(mach_port_t exception_port,
+                                                         mach_port_t thread,
+                                                         mach_port_t task,
+                                                         exception_type_t exception,
+                                                         mach_exception_data_t code,
+                                                         mach_msg_type_number_t codeCnt,
+                                                         int *flavor,
+                                                         const thread_state_t old_state_,
+                                                         mach_msg_type_number_t old_state_cnt,
+                                                         thread_state_t new_state_,
+                                                         mach_msg_type_number_t *new_state_cnt)
+{
+    const arm_thread_state64_internal *old_state = (const arm_thread_state64_internal *)old_state_;
+    new_state = (arm_thread_state64_internal *)new_state_;
+    memcpy(new_state, old_state, sizeof(arm_thread_state64_t));
+    *new_state_cnt = old_state_cnt;
+    
+    if (num_exceptions_handled == 0) {
+        DumpRegisters(old_state);
+        printf("got UpdateBrainService task port: %d\n", task);
+        
+        new_state->__lr = 0xFFFFFF00;
+    }
+    
+    dispatch_semaphore_signal(sem_output_ready);
+    if (num_exceptions_handled > 0) {
+        if ((old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00 || wantsDetach) {
+            wantsDetach = NO;
+            printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
+            DumpRegisters(old_state);
+            return KERN_FAILURE;
+        }
+    }
+    
+    new_state->__pc = brX8Address;
+    dispatch_semaphore_wait(sem_input_ready, DISPATCH_TIME_FOREVER);
+    
+    num_exceptions_handled++;
+    return KERN_SUCCESS;
+}
+
+
+kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_port,
+                                                         mach_port_t thread,
+                                                         mach_port_t task,
+                                                         exception_type_t exception,
+                                                         mach_exception_data_t code,
+                                                         mach_msg_type_number_t codeCnt,
+                                                         int *flavor,
+                                                         const thread_state_t old_state_,
+                                                         mach_msg_type_number_t old_state_cnt,
+                                                         thread_state_t new_state_,
+                                                         mach_msg_type_number_t *new_state_cnt)
+{
+    if (*flavor != ARM_THREAD_STATE64) {
+        return KERN_FAILURE;
+    }
+    static task_t dtsecurity_task = MACH_PORT_NULL;
+    static task_t updatebrain_task = MACH_PORT_NULL;
+    if (dtsecurity_task == MACH_PORT_NULL) {
+        dtsecurity_task = task;
+    } else if (updatebrain_task == MACH_PORT_NULL && task != dtsecurity_task) {
+        updatebrain_task = task;
+    }
+    
+    if (task == dtsecurity_task) {
+        return dtsecurity_catch_mach_exception_raise_state_identity(exception_port, thread, task, exception, code, codeCnt, flavor, old_state_, old_state_cnt, new_state_, new_state_cnt);
+    } else if (task == updatebrain_task) {
+        return updatebrain_catch_mach_exception_raise_state_identity(exception_port, thread, task, exception, code, codeCnt, flavor, old_state_, old_state_cnt, new_state_, new_state_cnt);
+    }
+    
+    abort(); // should not reach here
+    return KERN_FAILURE;
 }
 
 extern boolean_t mach_exc_server (mach_msg_header_t *msg, mach_msg_header_t *reply);
@@ -240,7 +297,6 @@ mach_port_t setup_exception_server(void) {
     return server_port;
 }
 
-os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
     // libswiftDistributed.dylib`swift_distributed_execute_target:
     // 0x20d1f0e58 <+352>: br     x8
@@ -291,17 +347,17 @@ void RemoteChangeLR(uint64_t newLR) {
 }
 
 uint32_t RemoteRead32(uint64_t address) {
-    return (uint32_t)RemoteArbCall(__atomic_load_4, address, 3);
+    return (uint32_t)RemoteArbCallOld(__atomic_load_4, address, 3);
 }
 uint64_t RemoteRead64(uint64_t address) {
-    return RemoteArbCall(__atomic_load_8, address, 3);
+    return RemoteArbCallOld(__atomic_load_8, address, 3);
 }
 
 void RemoteWrite32(uint64_t address, uint32_t value) {
-    RemoteArbCall(__atomic_store_4, address, value, 0);
+    RemoteArbCallOld(__atomic_store_4, address, value, 0);
 }
 void RemoteWrite64(uint64_t address, uint64_t value) {
-    RemoteArbCall(__atomic_store_8, address, value, 0);
+    RemoteArbCallOld(__atomic_store_8, address, value, 0);
 }
 
 void RemoteWriteMemory(uint64_t address, const void *data, size_t length) {
@@ -320,13 +376,13 @@ void RemoteDetach(void) {
     // kill(SIGSTOP)
     // task_set_exception_ports
     wantsDetach = YES;
-    mach_port_t task = (mach_port_t)RemoteArbCall(task_self_trap);
-    RemoteArbCall(task_set_exception_ports, task, 2, 0, 1, 0);
+    mach_port_t task = (mach_port_t)RemoteArbCallOld(task_self_trap);
+    RemoteArbCallOld(task_set_exception_ports, task, 2, 0, 1, 0);
 }
 
 kern_return_t
 RemoteTaskRead64(uint64_t addr, mach_port_t task, uint64_t map) {
-    kern_return_t kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, task, addr, sizeof(uint64_t), map, map + 8);
+    kern_return_t kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, task, addr, sizeof(uint64_t), map, map + 8);
     if (kr != KERN_SUCCESS) {
         printf("RemoteTaskRead64 failed\n");
         return kr;

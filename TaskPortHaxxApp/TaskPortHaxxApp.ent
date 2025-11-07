@@ -32,6 +32,7 @@
     <true/>
     <key>com.apple.security.iokit-user-client-class</key>
     <array>
+        <string>AppleMobileFileIntegrityUserClient</string>
         <string>IOSurfaceRootUserClient</string>
         <string>AGXDeviceUserClient</string>
         <string>AGXSharedUserClient</string>
@@ -71,6 +72,8 @@
         <key>com.apple.system-task-ports.control</key>
         <true/>
         <key>com.apple.system-task-ports.inspect</key>
+        <true/>
+        <key>com.apple.private.amfi.can-load-trust-cache</key>
         <true/>
 </dict>
 </plist>

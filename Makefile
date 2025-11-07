@@ -13,14 +13,17 @@ TaskPortHaxxApp_FILES = \
 	TaskPortHaxxApp/AppDelegate.m \
 	TaskPortHaxxApp/SceneDelegate.m \
 	TaskPortHaxxApp/ViewController.m \
+	TaskPortHaxxApp/ProcessContext.m \
 	TaskPortHaxxApp/main.m \
 	TaskPortHaxxApp/exception_handler.m \
 	TaskPortHaxxApp/fake_bootstrap_server.m \
 	TaskPortHaxxApp/launch.m \
 	TaskPortHaxxApp/troller.m \
+	TaskPortHaxxApp/unarchive.m \
 	TaskPortHaxxApp/mach_excServer.c \
 	TaskPortHaxxApp/NSUserDefaults+Pref.m
 TaskPortHaxxApp_FRAMEWORKS = UIKit CoreGraphics CoreServices IOKit
+TaskPortHaxxApp_LIBRARIES = archive
 TaskPortHaxxApp_CFLAGS = -fobjc-arc
 TaskPortHaxxApp_CODESIGN_FLAGS = -S./TaskPortHaxxApp/TaskPortHaxxApp.ent
 

