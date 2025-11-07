@@ -142,8 +142,8 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
         NSUserDefaults.standardUserDefaults.signedDiversifier = lastDiversifier;
     }
     
+    dispatch_semaphore_signal(sem_output_ready);
     if (num_exceptions_handled > 0) {
-        dispatch_semaphore_signal(sem_output_ready);
         if ((old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00 || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
@@ -243,6 +243,9 @@ os_unfair_lock funcLock = OS_UNFAIR_LOCK_INIT;
 uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount) {
     // libswiftDistributed.dylib`swift_distributed_execute_target:
     // 0x20d1f0e58 <+352>: br     x8
+    if (!new_state) {
+        dispatch_semaphore_wait(sem_output_ready, DISPATCH_TIME_FOREVER);
+    }
     
     if (argCount > 8) {
         uint64_t sp = new_state->__sp; xpaci(sp);

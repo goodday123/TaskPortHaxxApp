@@ -195,6 +195,10 @@ NSDictionary *getLaunchdStringOffsets(void) {
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        if (getpgid(self.childPid) <= 0) {
+            launchTest(@"dtsecurity");
+        }
+        
         kern_return_t kr;
         
         // Create a region which holds temp data (should we use stack instead?)
