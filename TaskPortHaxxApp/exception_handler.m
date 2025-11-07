@@ -83,6 +83,7 @@ kern_return_t catch_mach_exception_raise_state_identity (mach_port_t exception_p
     static uint32_t lastDiversifier = 0;
     
     if (num_exceptions_handled == 0) {
+        DumpRegisters(old_state);
         printf("got task port: %d\n", task);
         GlobalChildTaskPort = task;
         GlobalChildThreadPort = thread;

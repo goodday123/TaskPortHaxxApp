@@ -46,6 +46,8 @@ mach_port_t GlobalChildTaskPort;
 mach_port_t GlobalChildThreadPort;
 extern char **environ;
 
+int ptrace(int _request, pid_t _pid, caddr_t _addr, int _data);
+
 uint32_t __atomic_load_4(uint64_t *ptr, int memorder);
 uint64_t __atomic_load_8(uint64_t *ptr, int memorder);
 void __atomic_store_4(uint64_t *ptr, uint32_t val, int memorder);
@@ -104,7 +106,7 @@ struct xpc_global_data {
   // ...
 };
 
-BOOL launchTest(NSString *arg1);
+pid_t launchTest(NSString *arg1);
 
 kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
 xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);
