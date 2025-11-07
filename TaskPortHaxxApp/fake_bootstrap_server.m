@@ -8,11 +8,13 @@
 @import Darwin;
 @import Foundation;
 @import XPC;
+#import <bsm/audit.h>
 #import "Header.h"
 
 typedef boolean_t (*dispatch_mig_callback_t)(mach_msg_header_t *message, mach_msg_header_t *reply);
 int xpc_pipe_try_receive(mach_port_t p, xpc_object_t *message, mach_port_t *recvp, dispatch_mig_callback_t callout, size_t maxmsgsz, uint64_t flags);
 int xpc_receive_mach_msg(mach_msg_header_t *msg, uint64_t x1, uint64_t x2, uint64_t x3, xpc_object_t *request);
+void xpc_dictionary_get_audit_token(xpc_object_t, audit_token_t *);
 
 boolean_t dispatch_mig_callback(mach_msg_header_t *request, mach_msg_header_t *reply) {
     printf("dispatch_mig_callback asked to handle msgh_id 0x%x\n", request->msgh_id);
@@ -23,6 +25,11 @@ boolean_t dispatch_mig_callback(mach_msg_header_t *request, mach_msg_header_t *r
         xpc_receive_mach_msg((void *)((uint64_t)request - 0x58), 0, 0, 0, &reqObj);
         request->msgh_id = 0x400002ce;
         NSLog(@"Got request: %@", reqObj);
+        
+        audit_token_t token;
+        xpc_dictionary_get_audit_token(reqObj, &token);
+        pid_t pid = token.val[5];
+        printf("Request from pid: %d\n", pid);
         
         xpc_object_t reply = xpc_dictionary_create_reply(reqObj);
         // __XPC_IS_CRASHING_AFTER_AN_ATTEMPT_TO_CREATE_A_PROHIBITED_DOMAIN__ is not available on iOS 17.0
