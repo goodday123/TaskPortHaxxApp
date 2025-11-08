@@ -114,7 +114,7 @@ struct xpc_global_data {
   // ...
 };
 
-pid_t launchTest(NSString *arg1, BOOL suspended);
+pid_t launchTest(NSString *excPortName, NSString *arg1, BOOL suspended);
 
 kern_return_t _launch_job_routine(int selector, xpc_object_t request, id *result);
 xpc_object_t _CFXPCCreateXPCObjectFromCFObject(id object);

@@ -25,7 +25,7 @@ pid_t spawn_stage1_prepare_process(void) {
     return pid;
 }
 
-pid_t launchTest(NSString *arg1, BOOL suspended) {
+pid_t launchTest(NSString *excPortName, NSString *arg1, BOOL suspended) {
     NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
     NSString *execPath = NSBundle.mainBundle.executablePath;
     NSDictionary *plist = @{
@@ -48,7 +48,9 @@ pid_t launchTest(NSString *arg1, BOOL suspended) {
         @"EnvironmentVariables": @{
             @"TMPDIR": @"/var/tmp",
             @"HOME": @"/var/root",
-            @"CFFIXED_USER_HOME": @"/var/root"
+            @"CFFIXED_USER_HOME": @"/var/root",
+            @"HAXX_EXCEPTION_PORT_NAME": excPortName,
+            @"HAXX_START_SUSPENDED": @(suspended),
         },
         @"_AdditionalProperties": arg1 ? @{} : @{
             @"RunningBoard": @{

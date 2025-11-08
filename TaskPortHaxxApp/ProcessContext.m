@@ -27,10 +27,12 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
            old_state->__fp, old_state->__lr, old_state->__pc, old_state->__sp, old_state->__cpsr);
 }
 
+#define __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH 1
 @implementation ProcessContext
 
 - (instancetype)initWithExceptionPortName:(NSString *)portName {
     self = [super init];
+    self.exceptionPortName = portName;
     // setup exception handler
     _expectedLR = 0xFFFFFF00;
     _inputReadySemaphore = dispatch_semaphore_create(0);
@@ -47,7 +49,7 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
 }
 
 - (void)spawnProcess:(NSString *)name suspended:(BOOL)suspended {
-    self.pid = launchTest(name, suspended);
+    self.pid = launchTest(self.exceptionPortName, name, suspended);
 }
 
 - (uint32_t)read32:(uintptr_t)address {
@@ -165,7 +167,7 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
     printf("Calling function %s\n", name);
     
     _newState->__pc = brX8Address;
-    if (_newState->__flags & 1) { // __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH
+    if (_newState->__flags & __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH) {
         xpaci(_newState->__pc);
         _newState->__lr = 0xFFFFFF00;
     } else {
@@ -183,6 +185,18 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
     dispatch_semaphore_wait(_outputReadySemaphore, DISPATCH_TIME_FOREVER);
 }
 
+- (void)terminate {
+    if (_newState->__flags & __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH) {
+        _newState->__pc = (uint64_t)raise;
+        _newState->__x[0] = SIGKILL;
+        dispatch_semaphore_signal(_inputReadySemaphore);
+    }
+    // deallocate exception port
+    mach_port_t port = _exceptionPort;
+    _exceptionPort = MACH_PORT_NULL;
+    mach_port_deallocate(mach_task_self(), port);
+}
+
 - (kern_return_t)catch_mach_exception_raise_state_identity:(mach_port_t)thread task:(mach_port_t)task
 exception:(exception_type_t)exception code:(mach_exception_data_t)code
 codeCnt:(mach_msg_type_number_t)codeCnt flavor:(int *)flavor
@@ -197,10 +211,6 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     *new_stateCnt = old_stateCnt;
     _newState = new_state;
     
-//    printf("Exception type: %d\n", exception);
-//    printf("code[0]: 0x%llx\n", code[0]);
-//    if(codeCnt>1)printf("code[1]: 0x%llx\n", code[1]);
-    if(codeCnt>1) _lastExceptionStateNum = code[1];
     if (_numExceptionsHandled == 0) {
         DumpRegisters(old_state);
         printf("Got task port: %d\n", task);
@@ -208,6 +218,17 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     }
     
     if (_numExceptionsHandled > 0) {
+        BOOL hasPAC = !(old_state->__flags & __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH);
+        uint64_t ptrL = (uint64_t)(code[1] & 0xFFFFFFFFF);
+        uint64_t ptrR = (uint64_t)(brX8Address & 0xFFFFFFFFF);
+        if (hasPAC && exception == EXC_BAD_ACCESS && codeCnt == 2 &&
+            (code[0] == 1 || code[0] == 257) &&
+            (ptrL == ptrR || code[1] == 0xffffffffffffffff)) {
+            new_state->__pc = brX8Address;
+            new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC;
+            return KERN_SUCCESS;
+        }
+        
         dispatch_semaphore_signal(_outputReadySemaphore);
         if (_expectedLR == (uint64_t)-1) {
             // skip lr check
@@ -230,7 +251,7 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     __Request__mach_exception_raise_state_identity_t msg;
     __Reply__mach_exception_raise_state_identity_t reply;
     
-    do {
+    while(_exceptionPort != MACH_PORT_NULL) {
         rt = mach_msg((mach_msg_header_t *)&msg, MACH_RCV_MSG, 0, sizeof(msg), _exceptionPort, 0, MACH_PORT_NULL);
         assert(rt == MACH_MSG_SUCCESS);
         
@@ -239,7 +260,7 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
         // Send the now-initialized reply
         rt = mach_msg((mach_msg_header_t *)&reply, MACH_SEND_MSG, reply.Head.msgh_size, 0, MACH_PORT_NULL, 0, MACH_PORT_NULL);
         assert(rt == MACH_MSG_SUCCESS);
-    } while(true);
+    }
 }
 // from mach_excServer.c
 - (BOOL)mach_exc_server:(mach_msg_header_t *)InHeadP reply:(mach_msg_header_t *)OutHeadP {

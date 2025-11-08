@@ -11,7 +11,7 @@
 #import "Header.h"
 #import "unarchive.h"
 
-int child_execve(char *exceptionPortName, char *path, BOOL suspended) {
+int child_execve(char *exceptionPortName, char *path) {
     mach_port_t exception_port = MACH_PORT_NULL;
     mach_port_t fake_bootstrap_port = MACH_PORT_NULL;
     bootstrap_look_up(bootstrap_port, exceptionPortName, &exception_port);
@@ -122,10 +122,14 @@ int main(int argc, char * argv[]) {
         return UIApplicationMain(argc, argv, nil, appDelegateClassName);
     }
     
-    if (strcmp(argv[1], "dtsecurity") == 0) {
 #if !DTSECURITY_WAIT_FOR_DEBUGGER
+    char *startSuspended = getenv("HAXX_START_SUSPENDED");
+    if (startSuspended && atoi(startSuspended)) {
         usleep(100000); // FIXME: how to sleep until ptrace attach?
+    }
 #endif
+    
+    if (strcmp(argv[1], "dtsecurity") == 0) {
         NSString *execDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec";
         [NSFileManager.defaultManager createDirectoryAtPath:execDir withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *outDir = @"/var/db/com.apple.xpc.roleaccountd.staging/exec/TaskPortHaxx.xpc";
@@ -137,13 +141,13 @@ int main(int argc, char * argv[]) {
                 return 1;
             }
         }
-        char *portName = "com.kdt.taskporthaxx.dtsecurity_exception_server";
+        char *portName = getenv("HAXX_EXCEPTION_PORT_NAME");
         char *path = "/var/db/com.apple.xpc.roleaccountd.staging/exec/TaskPortHaxx.xpc/com.apple.dt.instruments.dtsecurity";
-        return child_execve(portName, path, YES);
+        return child_execve(portName, path);
     } else if (strcmp(argv[1], "updatebrain") == 0) {
-        char *portName = "com.kdt.taskporthaxx.updatebrain_exception_server";
+        char *portName = getenv("HAXX_EXCEPTION_PORT_NAME");
         char *path = "/var/db/com.apple.xpc.roleaccountd.staging/exec/com.apple.MobileSoftwareUpdate.UpdateBrainService.xpc/com.apple.MobileSoftwareUpdate.UpdateBrainService";
-        return child_execve(portName, path, NO);
+        return child_execve(portName, path);
     } else if (strcmp(argv[1], "updatebrain-prepare") == 0) {
         return child_stage1_prepare();
     }

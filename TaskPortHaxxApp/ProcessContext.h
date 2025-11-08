@@ -10,14 +10,15 @@
 #define RemoteArbCall(instance, _pc, ...) [instance arbCall:#_pc pc:(uint64_t)(_pc) args:(uint64_t[]){__VA_ARGS__} argCount:sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t)]
 
 @interface ProcessContext : NSObject
+@property(nonatomic, strong) NSString *exceptionPortName;
 @property(nonatomic, assign) pid_t pid;
 @property(nonatomic, assign) mach_port_t taskPort;
 @property(nonatomic, assign) mach_port_t exceptionPort;
 @property(nonatomic, strong) dispatch_semaphore_t inputReadySemaphore;
 @property(nonatomic, strong) dispatch_semaphore_t outputReadySemaphore;
+@property(nonatomic, strong) dispatch_semaphore_t hitExcHandlerSemaphore;
 @property(nonatomic, assign) arm_thread_state64_internal *newState;
 @property(nonatomic, assign) NSUInteger numExceptionsHandled;
-@property(nonatomic, assign) NSUInteger lastExceptionStateNum;
 @property(nonatomic, assign) uintptr_t expectedLR;
 
 - (instancetype)initWithExceptionPortName:(NSString *)portName;
@@ -30,6 +31,7 @@
 - (uint64_t)writeString:(uintptr_t)address string:(const char *)string;
 - (uint64_t)arbCall:(char *)name pc:(uintptr_t)pc args:(uint64_t *)args argCount:(NSUInteger)argCount;
 - (void)resume;
+- (void)terminate;
 
 - (kern_return_t)catch_mach_exception_raise_state_identity:(mach_port_t)thread task:(mach_port_t)task
 exception:(exception_type_t)exception code:(mach_exception_data_t)code
