@@ -519,17 +519,9 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
         vm_offset_t launchd_str_off = NSUserDefaults.standardUserDefaults.offsetLaunchdPath;
         vm_offset_t amfi_str_off = NSUserDefaults.standardUserDefaults.offsetAMFI;
         
-        printf("reprotecting 0x%lx\n", launchd_base + launchd_str_off);
+        printf("reprotecting 0x%lx\n", (launchd_base + launchd_str_off & ~PAGE_MASK));
         self.dtProc.lr = 0xFFFFFF00; // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(self.dtProc, vm_protect, launchd_task, launchd_base + amfi_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
-        if (kr != KERN_SUCCESS) {
-            printf("vm_protect failed: kr = %s\n", mach_error_string(kr));
-            sleep(5);
-            return;
-        }
-        
-        self.dtProc.lr = 0xFFFFFF00; // fix autibsp
-        kr = (kern_return_t)RemoteArbCall(self.dtProc, vm_protect, launchd_task, launchd_base + launchd_str_off, 0x20, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
+        kr = (kern_return_t)RemoteArbCall(self.dtProc, vm_protect, launchd_task, launchd_base + launchd_str_off & ~PAGE_MASK, 0x8000, false, PROT_READ | PROT_WRITE | VM_PROT_COPY);
         if (kr != KERN_SUCCESS) {
             printf("vm_protect failed: kr = %s\n", mach_error_string(kr));
             sleep(5);
