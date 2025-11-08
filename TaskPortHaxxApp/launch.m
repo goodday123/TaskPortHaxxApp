@@ -25,26 +25,6 @@ pid_t spawn_stage1_prepare_process(void) {
     return pid;
 }
 
-pid_t spawn_ptrace_process(pid_t victimPid) {
-    pid_t pid;
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    posix_spawnattr_set_persona_np(&attr, /*persona_id=*/99, POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE);
-    posix_spawnattr_set_persona_uid_np(&attr, 0);
-    posix_spawnattr_set_persona_gid_np(&attr, 0);
-    //posix_spawnattr_set_ptrauth_task_port_np(&attr, mach_task_self());
-    char pidStr[16];
-    snprintf(pidStr, sizeof(pidStr), "%d", victimPid);
-    char *argv[] = {**_NSGetArgv(), "attach", pidStr, NULL};
-    int ret = posix_spawn(&pid, argv[0], NULL, &attr, argv, environ);
-    if (ret) {
-        perror("posix_spawn");
-        return 0;
-    }
-    printf("Spawned ptrace process with PID %d\n", pid);
-    return pid;
-}
-
 pid_t launchTest(NSString *arg1, BOOL suspended) {
     NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
     NSString *execPath = NSBundle.mainBundle.executablePath;
@@ -101,12 +81,6 @@ pid_t launchTest(NSString *arg1, BOOL suspended) {
     pid_t launched_pid = -1;
     if (kr == KERN_SUCCESS && result && xpc_get_type(result) == XPC_TYPE_DICTIONARY) {
         launched_pid = (pid_t)xpc_dictionary_get_int64(result, "pid");
-        printf("spawned with pid %d\n", launched_pid);
-#if !DTSECURITY_WAIT_FOR_DEBUGGER
-        if (suspended) {
-            spawn_ptrace_process(launched_pid);
-        }
-#endif
     }
 
     return launched_pid;

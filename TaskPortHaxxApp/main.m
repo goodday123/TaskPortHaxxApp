@@ -33,7 +33,7 @@ int child_execve(char *exceptionPortName, char *path, BOOL suspended) {
         return 1;
     }
     
-    if(posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETEXEC | (suspended ? POSIX_SPAWN_START_SUSPENDED : 0)) != 0) {
+    if(posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETEXEC) != 0) {
         perror("posix_spawnattr_set_flags");
         return 1;
     }
@@ -122,17 +122,7 @@ int main(int argc, char * argv[]) {
         return UIApplicationMain(argc, argv, nil, appDelegateClassName);
     }
     
-    if (strcmp(argv[1], "attach") == 0) {
-        assert(argc == 3);
-        pid_t launched_pid = atoi(argv[2]);
-        int i = ptrace(14, launched_pid, 0, 0);
-        printf("ptrace attach returned %d\n", i);
-        if (i != 0) {
-            return 1;
-        }
-        ptrace(7, launched_pid, (void*)1, 0);
-        CFRunLoopRun();
-    } else if (strcmp(argv[1], "dtsecurity") == 0) {
+    if (strcmp(argv[1], "dtsecurity") == 0) {
 #if !DTSECURITY_WAIT_FOR_DEBUGGER
         usleep(100000); // FIXME: how to sleep until ptrace attach?
 #endif

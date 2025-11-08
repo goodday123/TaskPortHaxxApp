@@ -197,9 +197,12 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     *new_stateCnt = old_stateCnt;
     _newState = new_state;
     
+    printf("Exception type: %d\n", exception);
+    printf("code[0]: 0x%llx\n", code[0]);
+    if(codeCnt>1)printf("code[1]: 0x%llx\n", code[1]);
     if (_numExceptionsHandled == 0) {
         DumpRegisters(old_state);
-        printf("got task port: %d\n", task);
+        printf("Got task port: %d\n", task);
         _taskPort = task;
     }
     
