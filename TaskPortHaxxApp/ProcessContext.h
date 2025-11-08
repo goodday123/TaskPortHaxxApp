@@ -17,6 +17,7 @@
 @property(nonatomic, strong) dispatch_semaphore_t outputReadySemaphore;
 @property(nonatomic, assign) arm_thread_state64_internal *newState;
 @property(nonatomic, assign) NSUInteger numExceptionsHandled;
+@property(nonatomic, assign) uintptr_t expectedLR;
 
 - (instancetype)initWithExceptionPortName:(NSString *)portName;
 - (void)spawnProcess:(NSString *)name suspended:(BOOL)suspended;
@@ -25,8 +26,10 @@
 - (void)write32:(uintptr_t)address value:(uint32_t)value;
 - (void)write64:(uintptr_t)address value:(uint64_t)value;
 - (void)writeBytes:(uintptr_t)address data:(const void *)data length:(size_t)length;
-- (void)writeString:(uintptr_t)address string:(const char *)string;
+- (uint64_t)writeString:(uintptr_t)address string:(const char *)string;
 - (uint64_t)arbCall:(char *)name pc:(uintptr_t)pc args:(uint64_t *)args argCount:(NSUInteger)argCount;
+- (void)resume;
+
 - (kern_return_t)catch_mach_exception_raise_state_identity:(mach_port_t)thread task:(mach_port_t)task
 exception:(exception_type_t)exception code:(mach_exception_data_t)code
 codeCnt:(mach_msg_type_number_t)codeCnt flavor:(int *)flavor

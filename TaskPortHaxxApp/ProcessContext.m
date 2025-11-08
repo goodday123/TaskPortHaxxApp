@@ -32,6 +32,7 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
 - (instancetype)initWithExceptionPortName:(NSString *)portName {
     self = [super init];
     // setup exception handler
+    _expectedLR = 0xFFFFFF00;
     _inputReadySemaphore = dispatch_semaphore_create(0);
     _outputReadySemaphore = dispatch_semaphore_create(0);
     kern_return_t kr = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &_exceptionPort);
@@ -67,9 +68,19 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
         [self write64:address + offset value:*((uint64_t *)(data + offset))];
     }
 }
-- (void)writeString:(uintptr_t)address string:(const char *)string {
+- (uint64_t)writeString:(uintptr_t)address string:(const char *)string {
     size_t len = (strlen(string) + 7) & ~7ULL;
     [self writeBytes:address data:string length:len];
+    return address;
+}
+
+- (uint64_t)taskRead64:(mach_port_t)task addr:(uint64_t)addr map:(uint64_t)map {
+    kern_return_t kr = (kern_return_t)RemoteArbCall(self, vm_read_overwrite, task, addr, sizeof(uint64_t), map, map + 8);
+    if (kr != KERN_SUCCESS) {
+        printf("RemoteTaskRead64 failed\n");
+        return kr;
+    }
+    return kr;
 }
 
 /*
@@ -80,16 +91,6 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
      wantsDetach = YES;
      mach_port_t task = (mach_port_t)RemoteArbCallOld(task_self_trap);
      RemoteArbCallOld(task_set_exception_ports, task, 2, 0, 1, 0);
- }
-
- kern_return_t
- RemoteTaskRead64(uint64_t addr, mach_port_t task, uint64_t map) {
-     kern_return_t kr = (kern_return_t)RemoteArbCallOld(vm_read_overwrite, task, addr, sizeof(uint64_t), map, map + 8);
-     if (kr != KERN_SUCCESS) {
-         printf("RemoteTaskRead64 failed\n");
-         return kr;
-     }
-     return kr;
  }
 
  void RemoteTaskHexDump(uint64_t addr, size_t size, mach_port_t task, uint64_t map) {
@@ -162,14 +163,24 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
     memcpy(&_newState->__x[0], args, argCount * sizeof(uint64_t));
     
     printf("Calling function %s\n", name);
-    //printf("DBG: before dispatch_semaphore_signal(_inputReadySemaphore)\n");
-    dispatch_semaphore_signal(_inputReadySemaphore);
-    //printf("DBG: after dispatch_semaphore_signal(_inputReadySemaphore)\n");
-    dispatch_semaphore_wait(_outputReadySemaphore, DISPATCH_TIME_FOREVER);
-    //printf("DBG: after dispatch_semaphore_wait(_outputReadySemaphore)\n");
+    
+    _newState->__pc = brX8Address;
+    if (_newState->__flags & 1) { // __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH
+        xpaci(_newState->__pc);
+        _newState->__lr = 0xFFFFFF00;
+    } else {
+        // TODO: fixup LR
+    }
+    
+    [self resume];
     
     printf("- function returned x0=0x%llx\n", _newState->__x[0]);
     return _newState->__x[0];
+}
+
+- (void)resume {
+    dispatch_semaphore_signal(_inputReadySemaphore);
+    dispatch_semaphore_wait(_outputReadySemaphore, DISPATCH_TIME_FOREVER);
 }
 
 - (kern_return_t)catch_mach_exception_raise_state_identity:(mach_port_t)thread task:(mach_port_t)task
@@ -178,27 +189,23 @@ codeCnt:(mach_msg_type_number_t)codeCnt flavor:(int *)flavor
 old_state:(const arm_thread_state64_internal *)old_state old_stateCnt:(mach_msg_type_number_t)old_stateCnt
 new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_number_t *)new_stateCnt {
     if (*flavor != ARM_THREAD_STATE64) {
+        printf("Unsupported thread state flavor: %d\n", *flavor);
         return KERN_FAILURE;
     }
     
-    //printf("DBG: before memcpy state\n");
     memcpy(new_state, old_state, sizeof(arm_thread_state64_internal));
     *new_stateCnt = old_stateCnt;
     _newState = new_state;
-    //printf("DBG: after memcpy state\n");
     
     if (_numExceptionsHandled == 0) {
         DumpRegisters(old_state);
         printf("got task port: %d\n", task);
-        
         _taskPort = task;
-        new_state->__lr = 0xFFFFFF00;
     }
     
     if (_numExceptionsHandled > 0) {
-        //printf("DBG: dispatch_semaphore_signal(_outputReadySemaphore);\n");
         dispatch_semaphore_signal(_outputReadySemaphore);
-        if ((old_state->__lr & 0xFFFFFF00) != 0xFFFFFF00 || wantsDetach) {
+        if ((old_state->__lr & 0xFFFFFF00) != _expectedLR || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             DumpRegisters(old_state);
@@ -206,13 +213,6 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
         }
     }
     
-    if (old_state->__flags & 1) { // __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH
-        new_state->__pc = xpaci(brX8Address);
-        new_state->__lr = 0xFFFFFF00;
-    } else {
-        new_state->__pc = brX8Address;
-    }
-    //printf("DBG: dispatch_semaphore_wait(_inputReadySemaphore);\n");
     dispatch_semaphore_wait(_inputReadySemaphore, DISPATCH_TIME_FOREVER);
     
     _numExceptionsHandled++;

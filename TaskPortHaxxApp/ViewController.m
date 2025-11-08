@@ -214,7 +214,9 @@ NSDictionary *getLaunchdStringOffsets(void) {
 
 - (void)testButtonTapped {
     [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
+    printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
     [self.ubProc spawnProcess:@"updatebrain" suspended:NO];
+    printf("Spawned UpdateBrainService with PID %d\n", self.ubProc.pid);
 }
 
 - (void)arbCallButtonTapped {
@@ -223,6 +225,7 @@ NSDictionary *getLaunchdStringOffsets(void) {
         vm_size_t page_size = getpagesize();
         
         dtsecurityTaskPort = self.dtProc.taskPort;
+        bootstrap_register(bootstrap_port, "com.kdt.taskporthaxx.dtsecurity_task_port", dtsecurityTaskPort);
         if(!dtsecurityTaskPort) {
             printf("dtsecurity task port is null?\n");
             return;
@@ -241,19 +244,76 @@ NSDictionary *getLaunchdStringOffsets(void) {
         vm_address_t xpc_bootstrap_pipe = RemoteArbCall(self.ubProc, xpc_pipe_create_from_port, remote_bootstrap_port, 0, map);
         printf("xpc_bootstrap_pipe: 0x%lx\n", xpc_bootstrap_pipe);
         vm_address_t dict = RemoteArbCall(self.ubProc, xpc_dictionary_create_empty);
-        [self.ubProc writeString:map+0x10 string:"name"];
-        [self.ubProc writeString:map+0x20 string:"port"];
-        RemoteArbCall(self.ubProc, xpc_dictionary_set_string, dict, map+0x10, map+0x20);
+        vm_address_t keyStr = [self.ubProc writeString:map+0x10 string:"name"];
+        vm_address_t valueStr = [self.ubProc writeString:map+0x20 string:"port"];
+        RemoteArbCall(self.ubProc, xpc_dictionary_set_string, dict, keyStr, valueStr);
         RemoteArbCall(self.ubProc, _xpc_pipe_interface_routine, xpc_bootstrap_pipe, 0xcf, dict, map, 0);
         vm_address_t reply = [self.ubProc read64:map];
-        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(self.ubProc, xpc_dictionary_copy_mach_send, reply, map+0x20);
+        mach_port_t dtsecurity_task = (mach_port_t)RemoteArbCall(self.ubProc, xpc_dictionary_copy_mach_send, reply, valueStr);
+        if (!dtsecurity_task) {
+            printf("Failed to get dtsecurity task port from UpdateBrainService\n");
+            return;
+        }
         printf("Got dtsecurity task port from UpdateBrainService: 0x%x\n", dtsecurity_task);
         
+        // Get dtsecurity thread port
+        vm_address_t threads = map + 0x10;
+        vm_address_t thread_count = map;
+        [self.ubProc write32:thread_count value:TASK_BASIC_INFO_64_COUNT];
+        kr = (kern_return_t)RemoteArbCall(self.ubProc, task_threads, dtsecurity_task, threads, thread_count);
+        if (kr != KERN_SUCCESS) {
+            printf("task_threads failed: %s\n", mach_error_string(kr));
+            return;
+        }
+        threads = [self.ubProc read64:threads];
+        thread_t dtsecurity_thread = (thread_t)[self.ubProc read32:threads];
+        printf("dtsecurity thread port: 0x%x\n", dtsecurity_thread);
         
+        // Get dtsecurity debug state
+        arm_debug_state64_t *debug_state = (arm_debug_state64_t *)(map + 0x10);
+        vm_address_t debug_state_count = map;
+        [self.ubProc write32:debug_state_count value:ARM_DEBUG_STATE64_COUNT];
+        kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_get_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, debug_state_count);
+        if (kr != KERN_SUCCESS) {
+            printf("thread_get_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
+            return;
+        }
         
+        // Set hardware breakpoints to pacia instruction
+        uint64_t _dyld_start = self.dtProc.newState->__pc;
+        xpaci(_dyld_start);
+#warning hardcoded offset to pacia instruction, need to find dynamically
+        uint64_t pacia_inst = _dyld_start -6168;
+        printf("_dyld_start: 0x%llx\n", _dyld_start);
+        printf("pacia: 0x%llx\n", pacia_inst);
+        [self.ubProc write64:(uint64_t)&debug_state->__bvr[0] value:pacia_inst];
+        [self.ubProc write64:(uint64_t)&debug_state->__bcr[0] value:0x1e5];
+        [self.ubProc write64:(uint64_t)&debug_state->__bvr[1] value:pacia_inst+4];
+        [self.ubProc write64:(uint64_t)&debug_state->__bcr[1] value:0x1e5];
+        [self.ubProc write64:(uint64_t)&debug_state->__mdscr_el1 value:1]; // SS_ENABLE
+        kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_set_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, ARM_DEBUG_STATE64_COUNT);
+        if (kr != KERN_SUCCESS) {
+            printf("thread_set_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
+            return;
+        }
+        printf("Set hardware breakpoints\n");
         
+        self.dtProc.expectedLR = 0;
         
-        
+        //self.dtProc.newState->__pc = 0x41414140;
+        //self.dtProc.newState->__flags = 0;
+        [self.dtProc resume];
+        printf("Resume 1:\n");
+        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
+        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
+        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
+        /*
+        [self.dtProc resume];
+        printf("Resume 2:\n");
+        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
+        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
+        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
+        */
 #if 0
         // Create a region which holds temp data (should we use stack instead?)
         void *map = RemoteArbCallOld(mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -485,7 +545,12 @@ NSDictionary *getLaunchdStringOffsets(void) {
 
 - (void)detachButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        RemoteArbCall(self.ubProc, task_self_trap);
+        //RemoteArbCall(self.ubProc, task_self_trap);
+        [self.dtProc resume];
+        printf("Resume 1:\n");
+        printf(" pc: 0x%016llx\n", self.dtProc.newState->__pc);
+        printf("x16: 0x%016llx\n", self.dtProc.newState->__x[16]);
+        printf("x08: 0x%016llx\n", self.dtProc.newState->__x[8]);
     });
 }
 
