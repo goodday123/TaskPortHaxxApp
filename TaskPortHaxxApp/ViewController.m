@@ -40,8 +40,28 @@ NSDictionary *getLaunchdStringOffsets(void) {
 }
 
 uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
-#warning hardcoded offset to pacia instruction, need to find dynamically
-    uint64_t pacia_inst = _dyld_start -6168;
+    void *handle = dlopen("/usr/lib/dyld", RTLD_GLOBAL);
+    uint32_t *func = (uint32_t *)dlsym(RTLD_DEFAULT, "_dyld_start");
+    uint32_t *dyld_start_func = func;
+
+    // 1. find where `B start`
+    for (; (*func & 0xFC000000) != 0x14000000;/* b */ func++) {}
+    // printf("B start: %p\n", func);
+
+    // 2. obtain offset where branch
+    uint32_t imm26 = *func & 0x3ffffff;
+    int32_t off = (int32_t)(imm26 << 2);
+    if (imm26 & (1<<25)) off |= 0xFC000000;
+    // printf("off: %d\n", off);
+    func += off/sizeof(*func);
+    // printf("start: %p\n", func);
+
+    // 3. find pacia x16, x8
+    for (; (*func & 0xFFFFFFFF) != 0xDAC10110;/* pacia x16, x8 */ func++) {}
+    // printf("pacia x16, x8 in start: %p\n", func);
+    off = (uint32_t)dyld_start_func - (uint32_t)func;
+
+    uint64_t pacia_inst = _dyld_start - off;
     return pacia_inst;
 }
 
