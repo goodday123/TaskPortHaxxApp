@@ -17,6 +17,7 @@
 @property(nonatomic, strong) dispatch_semaphore_t outputReadySemaphore;
 @property(nonatomic, assign) arm_thread_state64_internal *newState;
 @property(nonatomic, assign) NSUInteger numExceptionsHandled;
+@property(nonatomic, assign) NSUInteger lastExceptionStateNum;
 @property(nonatomic, assign) uintptr_t expectedLR;
 
 - (instancetype)initWithExceptionPortName:(NSString *)portName;

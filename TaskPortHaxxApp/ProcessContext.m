@@ -197,9 +197,10 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     *new_stateCnt = old_stateCnt;
     _newState = new_state;
     
-    printf("Exception type: %d\n", exception);
-    printf("code[0]: 0x%llx\n", code[0]);
-    if(codeCnt>1)printf("code[1]: 0x%llx\n", code[1]);
+//    printf("Exception type: %d\n", exception);
+//    printf("code[0]: 0x%llx\n", code[0]);
+//    if(codeCnt>1)printf("code[1]: 0x%llx\n", code[1]);
+    if(codeCnt>1) _lastExceptionStateNum = code[1];
     if (_numExceptionsHandled == 0) {
         DumpRegisters(old_state);
         printf("Got task port: %d\n", task);
@@ -208,7 +209,10 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     
     if (_numExceptionsHandled > 0) {
         dispatch_semaphore_signal(_outputReadySemaphore);
-        if ((old_state->__lr & 0xFFFFFF00) != _expectedLR || wantsDetach) {
+        if (_expectedLR == (uint64_t)-1) {
+            // skip lr check
+            printf("Skipping check for lr value: 0x%llx\n", old_state->__lr);
+        } else if ((old_state->__lr & 0xFFFFFF00) != _expectedLR || wantsDetach) {
             wantsDetach = NO;
             printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
             DumpRegisters(old_state);
