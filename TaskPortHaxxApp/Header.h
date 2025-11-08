@@ -26,19 +26,6 @@
                 return;\
                 }
 
-#define RemoteArbCallOld(pc, ...) RemoteArbCallInternal((#pc), (uint64_t)(pc), (uint64_t[]){__VA_ARGS__}, sizeof((uint64_t[]){__VA_ARGS__})/sizeof(uint64_t))
-uint64_t RemoteArbCallInternal(char *name, uint64_t pc, uint64_t args[], int argCount);
-void RemoteChangeLR(uint64_t newLR);
-uint64_t RemoteSignPACIA(uint64_t address, uint64_t modifier);
-uint64_t RemoteRead64(uint64_t address);
-uint32_t RemoteRead32(uint64_t address);
-void RemoteWrite32(uint64_t address, uint32_t value);
-void RemoteWrite64(uint64_t address, uint64_t value);
-void RemoteWriteMemory(uint64_t address, const void *data, size_t length);
-void RemoteWriteString(uint64_t address, const char *string);
-void RemoteDetach(void);
-void RemoteTaskHexDump(uint64_t addr, size_t size, mach_port_t task, uint64_t map);
-
 #define PT_CONTINUE 7
 #define PT_KILL 8
 #define PT_STEP 9
@@ -80,7 +67,7 @@ int posix_spawnattr_set_registered_ports_np(posix_spawnattr_t *__restrict attr, 
 mach_port_t setup_fake_bootstrap_server(void);
 mach_port_t setup_exception_server(void);
 pid_t spawn_exploit_process(mach_port_t exception_port);
-pid_t spawn_stage1_prepare_process(void);
+int spawn_stage1_prepare_process(void);
 
 #define __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR 0x2
 #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC 0x4
@@ -128,6 +115,7 @@ void *_os_alloc_once(struct _os_alloc_once_s *slot, size_t sz,
                             os_function_t init);
 
 int userspaceReboot(void);
+int load_trust_cache(NSString *tcPath);
 
 @interface LSApplicationWorkspace : NSObject
 + (instancetype)defaultWorkspace;

@@ -50,6 +50,10 @@ int child_execve(char *exceptionPortName, char *path) {
 
 int load_trust_cache(NSString *tcPath) {
     NSData *tcData = [NSData dataWithContentsOfFile:tcPath];
+    if (!tcData) {
+        printf("Trust cache file not found: %s\n", tcPath.fileSystemRepresentation);
+        return 1;
+    }
     CFDictionaryRef match = IOServiceMatching("AppleMobileFileIntegrity");
     io_service_t svc = IOServiceGetMatchingService(0, match);
     io_connect_t conn;
@@ -86,12 +90,6 @@ int child_stage1_prepare(void) {
         printf("Extracting UpdateBrainService\n");
         extract(zipPath, outDir, NULL);
         [NSFileManager.defaultManager removeItemAtPath:zipPath error:nil];
-    }
-    
-    // Load trust cache
-    NSString *tcPath = [assetDir stringByAppendingPathComponent:@".TrustCache"];
-    if (load_trust_cache(tcPath) != 0) {
-        return 1;
     }
     
     // Copy xpc service

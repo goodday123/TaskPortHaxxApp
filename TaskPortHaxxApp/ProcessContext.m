@@ -85,24 +85,14 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
     return kr;
 }
 
-/*
- 
- void RemoteDetach(void) {
-     // kill(SIGSTOP)
-     // task_set_exception_ports
-     wantsDetach = YES;
-     mach_port_t task = (mach_port_t)RemoteArbCallOld(task_self_trap);
-     RemoteArbCallOld(task_set_exception_ports, task, 2, 0, 1, 0);
- }
-
- void RemoteTaskHexDump(uint64_t addr, size_t size, mach_port_t task, uint64_t map) {
+- (void)taskHexDump:(uint64_t)addr size:(size_t)size task:(mach_port_t)task map:(uint64_t)map {
      void *data = malloc(size);
      if (!data) return;
 
      size_t off = 0;
      while (off < size) {
-         RemoteTaskRead64(addr + off, task, map);
-         uint64_t v = RemoteRead64(map);
+         [self taskRead64:task addr:addr + off map:map];
+         uint64_t v = [self read64:map];
 
          size_t to_copy = (size - off) < 8 ? (size - off) : 8;
          memcpy((unsigned char*)data + off, &v, to_copy);
@@ -143,8 +133,6 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
      free(data);
  }
 
- */
-
 - (uint64_t)arbCall:(char *)name pc:(uintptr_t)pc args:(uint64_t *)args argCount:(NSUInteger)argCount {
     // libswiftDistributed.dylib`swift_distributed_execute_target:
     // 0x20d1f0e58 <+352>: br     x8
@@ -171,13 +159,23 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
         xpaci(_newState->__pc);
         _newState->__lr = 0xFFFFFF00;
     } else {
-        // TODO: fixup LR
+        _newState->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC;
     }
     
     [self resume];
     
     printf("- function returned x0=0x%llx\n", _newState->__x[0]);
     return _newState->__x[0];
+}
+
+- (void)setLr:(uint64_t)newLR {
+    // libdispatch.dylib`__dispatch_event_loop_cancel_waiter.cold.1:
+    // 0x18e527974 <+8>:  mov    x30, x1
+    // libdispatch.dylib`__dispatch_event_loop_cancel_waiter.cold.2:
+    // 0x18e527978 <+0>:  ldr    x8, [x0, #0x40]
+    
+    // x0=0 to cause a null deref to bring control back to us
+    RemoteArbCall(self, changeLRAddress, 0, newLR);
 }
 
 - (void)resume {
@@ -275,8 +273,8 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     OutHeadP->msgh_reserved = 0;
     
 //    if ((InHeadP->msgh_id > 2409) || (InHeadP->msgh_id < 2405) ||
-    if ((InHeadP->msgh_id != 2407) ||
-        ((routine = catch_mach_exc_subsystem.routine[InHeadP->msgh_id - 2405].stub_routine) == 0)) {
+//        ((routine = catch_mach_exc_subsystem.routine[InHeadP->msgh_id - 2405].stub_routine) == 0)) {
+    if (InHeadP->msgh_id != 2407) {
         ((mig_reply_error_t *)OutHeadP)->NDR = NDR_record;
         ((mig_reply_error_t *)OutHeadP)->RetCode = MIG_BAD_ID;
         return FALSE;

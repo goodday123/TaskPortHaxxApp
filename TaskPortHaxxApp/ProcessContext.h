@@ -29,7 +29,10 @@
 - (void)write64:(uintptr_t)address value:(uint64_t)value;
 - (void)writeBytes:(uintptr_t)address data:(const void *)data length:(size_t)length;
 - (uint64_t)writeString:(uintptr_t)address string:(const char *)string;
+- (uint64_t)taskRead64:(mach_port_t)task addr:(uint64_t)addr map:(uint64_t)map;
+- (void)taskHexDump:(uint64_t)addr size:(size_t)size task:(mach_port_t)task map:(uint64_t)map;
 - (uint64_t)arbCall:(char *)name pc:(uintptr_t)pc args:(uint64_t *)args argCount:(NSUInteger)argCount;
+- (void)setLr:(uint64_t)newLR;
 - (void)resume;
 - (void)terminate;
 

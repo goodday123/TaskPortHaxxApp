@@ -8,7 +8,7 @@
 @import Foundation;
 #import "Header.h"
 
-pid_t spawn_stage1_prepare_process(void) {
+int spawn_stage1_prepare_process(void) {
     pid_t pid;
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
@@ -19,10 +19,16 @@ pid_t spawn_stage1_prepare_process(void) {
     int ret = posix_spawn(&pid, argv[0], NULL, &attr, argv, environ);
     if (ret) {
         perror("posix_spawn");
-        return 0;
+        return 1;
     }
     printf("Spawned stage1 prepare process with PID %d\n", pid);
-    return pid;
+    // Wait for it to exit
+    int status;
+    waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        printf("Stage1 prepare process failed\n");
+    }
+    return status;
 }
 
 pid_t launchTest(NSString *excPortName, NSString *arg1, BOOL suspended) {
