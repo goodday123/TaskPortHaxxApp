@@ -71,7 +71,7 @@ void DumpRegisters(const arm_thread_state64_internal *old_state) {
     }
 }
 - (uint64_t)writeString:(uintptr_t)address string:(const char *)string {
-    size_t len = (strlen(string) + 7) & ~7ULL;
+    size_t len = (strlen(string)+1 + 7) & ~7ULL;
     [self writeBytes:address data:string length:len];
     return address;
 }
@@ -218,11 +218,11 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
     if (_numExceptionsHandled > 0) {
         BOOL hasPAC = !(old_state->__flags & __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH);
         uint64_t ptrL = (uint64_t)(code[1] & 0xFFFFFFFFF);
-        uint64_t ptrR = (uint64_t)(brX8Address & 0xFFFFFFFFF);
+        uint64_t ptrR = (uint64_t)(_lastPC & 0xFFFFFFFFF);
         if (hasPAC && exception == EXC_BAD_ACCESS && codeCnt == 2 &&
             (code[0] == 1 || code[0] == 257) &&
             (ptrL == ptrR || code[1] == 0xffffffffffffffff)) {
-            new_state->__pc = brX8Address;
+            new_state->__pc = _lastPC;
             new_state->__flags &= ~__DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_PC;
             return KERN_SUCCESS;
         }
@@ -231,15 +231,16 @@ new_state:(arm_thread_state64_internal *)new_state new_stateCnt:(mach_msg_type_n
         if (_expectedLR == (uint64_t)-1) {
             // skip lr check
             printf("Skipping check for lr value: 0x%llx\n", old_state->__lr);
-        } else if ((old_state->__lr & 0xFFFFFF00) != _expectedLR || wantsDetach) {
+        } else if ((uint32_t)old_state->__lr != (uint32_t)_expectedLR || wantsDetach) {
             wantsDetach = NO;
-            printf("Process might have crashed! unexpected lr value: 0x%llx\n", old_state->__lr);
+            printf("Process might have crashed! unexpected lr value: 0x%llx (expected: 0x%llx)\n", old_state->__lr, _expectedLR);
             DumpRegisters(old_state);
             return KERN_FAILURE;
         }
     }
     
     dispatch_semaphore_wait(_inputReadySemaphore, DISPATCH_TIME_FOREVER);
+    _lastPC = new_state->__pc;
     
     _numExceptionsHandled++;
     return KERN_SUCCESS;

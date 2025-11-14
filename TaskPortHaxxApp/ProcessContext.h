@@ -20,6 +20,7 @@
 @property(nonatomic, assign) arm_thread_state64_internal *newState;
 @property(nonatomic, assign) NSUInteger numExceptionsHandled;
 @property(nonatomic, assign) uintptr_t expectedLR;
+@property(nonatomic, assign) uintptr_t lastPC;
 
 - (instancetype)initWithExceptionPortName:(NSString *)portName;
 - (void)spawnProcess:(NSString *)name suspended:(BOOL)suspended;
