@@ -124,11 +124,11 @@ dyld`start:
 All we need to do now is to:
 - Spawn a root process suspended using launch job. At this point, we have not `posix_spawn` the real victim binary yet. This is to make it possible for `UpdateBrainService` to attach to it via `ptrace`.
 
-- Send its task port to `UpdateBrainService` process via any means like XPC. I borrowed the fake bootstrap service and hooked `bootstrap_look_up` routine to stash the task port. For some reason, it is possible to send a task port that we obtained via exception handler to another process, meanwhile task ports from `task_for_pid` would have the immovable flag set.
-
 - Make `UpdateBrainService` attach to the process via `ptrace` and resume it
 
-- When victim process resumes, it will do the Launch Constraint bypass as described above which jumps to victim binary. Since `UpdateBrainService` attached to it earlier, the process will stop at `_dyld_start`
+- When victim process resumes, it will do the Launch Constraint bypass as described above which jumps to victim binary. Since `UpdateBrainService` attached to it earlier, the process will stop at `_dyld_start`, which will fire our exception handler with the victim's task port and thread state.
+
+- Send the task port we got from exception handler to `UpdateBrainService` process via any means like XPC. I borrowed the fake bootstrap server and hooked `bootstrap_look_up` routine to stash the task port. For some reason, it is possible to send a task port that we obtained via exception handler to another process, meanwhile task ports from `task_for_pid` would have the immovable flag set.
 
 - When an attached process execve, it is suspended with `SIGTRAP`. Clear `SIGTRAP` from the victim process with `ptrace(PT_THUPDATE)`
 
