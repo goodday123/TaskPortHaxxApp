@@ -142,14 +142,14 @@ All we need to do now is to:
 
 - Previously I would make it kill the victim process and respawn it, but now I have made it sign 2 pointers (one is `pacia` itself, another is `br` gadget) and recover x8, x16 and PC in the victim's thread state to resume directly
 
-### Getting `launchd` task port
+## Getting `launchd` task port
 Now that we have arbitrary code execution in arm64e platform process, let's find a process capable of getting `launchd` task port. In order for a process to get other process's task port, it must be a platform process with `com.apple.system-task-ports.control` entitlement.
 
 Looking over the [entitlements database](https://newosxbook.com/ent.php?osVer=iOS18&exec=com.apple.dt.instruments.dtsecurity) and as @asdfugil suggested, we found `com.apple.dt.instruments.dtsecurity` XPC service, which is very funny judging by its "security" name. How in the world could a security service has the capability to compromise the entire system??? This service is part of Xcode Instruments.
 
 After doing the PAC bypass, all we need to do is to call `task_for_pid` on PID 1 to get `launchd` task port. Now we have tfp1 for iOS 17.0 before GTA 6.
 
-### Modifying launchd memory
+## Modifying launchd memory
 After all this we got code execution in platform process and launchd task port. Now we just need to somehow overwrite `launchd` executable path, which is located in `__TEXT` region which may trip codesigning... Fortunately, the `__TEXT` page storing the executable path is outside of the executable code, so we can just reprotect it to writable with `VM_PROT_COPY` and overwrite it.
 
 On iOS 17.0, `launchd` would try to enforce Launch Constraint on itself
