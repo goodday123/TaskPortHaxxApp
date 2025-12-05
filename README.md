@@ -4,6 +4,8 @@ Attempt to manipulate platform process task port with CoreTrust bug alone. This 
 It used to be that having a CoreTrust (therefore TrollStore) bypass does not equal to a jailbreak. However, it it now possible to achieve a semi-jailbreak on these (at least until all supported versions for now, 16.7RC and 17.0)
 Read below for more info.
 
+- Update (2025-12-05): NathanLR 2.0 utilizing this PoC is out. You can get it [here](https://ios.cfw.guide/installing-nathanlr/#installing-nathanlr)
+
 There are many loopholes used in this PoC:
 - Launch Constraint bypass (for iOS 16.0+)
 - Spawn root process from `launchd` without being a platform binary
@@ -210,7 +212,7 @@ There is no point in doing this given we have CoreTrust bypass, however I was cu
 I had an idea that if I could `dlopen("/usr/libexec/debugserver")`, I could turn it into a debugger that can attach to platform process. (TODO)
 
 ### wen eta nathanlr 17.0
-Should be before GTA 6 drops
+eta now
 
 ## Thanks to
 - @Siguza for psychicpaper writeup and a complete implementation of exception port method
