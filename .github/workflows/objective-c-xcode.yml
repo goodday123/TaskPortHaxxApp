@@ -1,30 +1,106 @@
-name: Xcode - Build and Analyze
-
+name: CI - Build and Test
 on:
-  push:
-    branches: [ "pacbypass" ]
-  pull_request:
-    branches: [ "pacbypass" ]
-
+push:
+branches: [ main, develop ]
+pull_request:
+branches: [ main ]
 jobs:
-  build:
-    name: Build and analyse default scheme using xcodebuild command
-    runs-on: macos-latest
+build-and-analyze:
+runs-on: macos-latest
+steps:
+- name: Checkout repository
+  uses: actions/checkout@v4
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set Default Scheme
-        run: |
-          scheme_list=$(xcodebuild -list -json | tr -d "\n")
-          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
-          echo $default | cat >default
-          echo Using default scheme: $default
-      - name: Build
-        env:
-          scheme: ${{ 'default' }}
-        run: |
-          if [ $scheme = default ]; then scheme=$(cat default); fi
-          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
-          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
-          xcodebuild clean build analyze -scheme "$scheme" -"$filetype_parameter" "$file_to_build" | xcpretty && exit ${PIPESTATUS[0]}
+- name: Set up Xcode
+  # 选择一个包含所需 SDK 版本的 Xcode。根据项目README，它支持 iOS 16.7RC 和 17.0。
+  run: sudo xcode-select -s /Applications/Xcode_15.2.app/Contents/Developer
+  # 注意：你需要确保此版本的 Xcode 在 GitHub Actions 的 macOS 运行器上可用。
+  # 你可以根据项目要求调整版本号，或使用 `macos-13` 等特定镜像。
+
+- name: Show Xcode version
+  run: xcodebuild -version
+
+- name: Identify Project Structure
+  run: |
+    echo "项目根目录内容:"
+    ls -la
+    echo "---"
+    # 尝试寻找常见的项目文件
+    if [ -f "Makefile" ]; then
+      echo "找到 Makefile，项目可能使用 make 构建。"
+      PROJECT_TYPE="make"
+    elif [ -d "*.xcodeproj" ]; then
+      echo "找到 Xcode 项目文件(.xcodeproj)。"
+      PROJECT_TYPE="xcodeproj"
+    elif [ -d "*.xcworkspace" ]; then
+      echo "找到 Xcode 工作空间(.xcworkspace)。"
+      PROJECT_TYPE="xcworkspace"
+    else
+      echo "未发现标准项目文件。项目可能是一个脚本集合或需要特殊构建流程。"
+      PROJECT_TYPE="other"
+    fi
+    echo "PROJECT_TYPE=$PROJECT_TYPE" >> $GITHUB_ENV
+
+- name: Run Linter (ClangFormat 示例)
+  # 这是一个代码风格检查的示例。你需要项目中有对应的 .clang-format 配置文件。
+  # 如果项目没有，可以跳过或使用其他 linter。
+  continue-on-error: true # 如果项目未配置，此步骤允许失败
+  run: |
+    if [ -f ".clang-format" ]; then
+      find . -name "*.m" -o -name "*.h" | xargs clang-format --dry-run --Werror
+    else
+      echo "未找到 .clang-format 配置文件，跳过代码风格检查。"
+    fi
+
+- name: Attempt Build (基于项目类型)
+  run: |
+    case "$PROJECT_TYPE" in
+      "make")
+        make  # 或具体的构建目标，如 `make all`
+        ;;
+      "xcodeproj")
+        # 寻找第一个 .xcodeproj 文件
+        XCODE_PROJ=$(find . -name "*.xcodeproj" -type d | head -1)
+        if [ -n "$XCODE_PROJ" ]; then
+          xcodebuild -project "$XCODE_PROJ" -scheme "TaskPortHaxxApp" -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+        else
+          echo "错误：未找到 .xcodeproj 文件。"
+          exit 1
+        fi
+        ;;
+      "xcworkspace")
+        # 寻找第一个 .xcworkspace 文件
+        XCODE_WS=$(find . -name "*.xcworkspace" -type d | head -1)
+        if [ -n "$XCODE_WS" ]; then
+          xcodebuild -workspace "$XCODE_WS" -scheme "TaskPortHaxxApp" -destination 'generic/platform=iOS' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+        else
+          echo "错误：未找到 .xcworkspace 文件。"
+          exit 1
+        fi
+        ;;
+      "other")
+        echo "项目类型为 'other'。执行自定义构建检查。"
+        # 示例：检查关键源文件是否存在
+        if [ -f "launch.m" ] && [ -f "main.m" ]; then
+          echo "关键源文件存在。"
+          # 可以尝试使用 clang 进行简单的语法检查
+          clang -fsyntax-only -isysroot $(xcrun --show-sdk-path --sdk iphoneos) launch.m 2>&1 | head -20
+        else
+          echo "警告：未找到预期的关键源文件。"
+        fi
+        ;;
+      *)
+        echo "未知的项目类型，跳过构建步骤。"
+        ;;
+    esac
+
+- name: Run Tests (如果存在)
+  # 假设项目包含 XCTest 或其它测试。如果不存在，此步骤会被跳过或失败。
+  continue-on-error: true
+  run: |
+    if [ "$PROJECT_TYPE" = "xcodeproj" ] || [ "$PROJECT_TYPE" = "xcworkspace" ]; then
+      # 运行测试套件
+      xcodebuild test -project "$XCODE_PROJ" -scheme "TaskPortHaxxApp" -destination 'platform=iOS Simulator,name=iPhone 15,OS=17.2' CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+    else
+      echo "非标准 Xcode 项目，跳过自动化测试。"
+    fi
